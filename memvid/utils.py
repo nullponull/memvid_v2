@@ -2,300 +2,103 @@
 Shared utility functions for Memvid
 """
 
-import io
-import json
-import qrcode
-import cv2
-import numpy as np
-from PIL import Image
-from typing import List, Tuple, Optional, Dict, Any
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from functools import lru_cache
 import logging
-from tqdm import tqdm
-import base64
-import gzip
-
-from .config import get_default_config
+from typing import List
 
 logger = logging.getLogger(__name__)
 
-
-def encode_to_qr(data: str, config: Optional[Dict[str, Any]] = None) -> Image.Image:
-    """
-    Encode data to QR code image
-    
-    Args:
-        data: String data to encode
-        config: Optional QR configuration
-        
-    Returns:
-        PIL Image of QR code
-    """
-    if config is None:
-        config = get_default_config()["qr"]
-    else:
-        # If config is provided but incomplete, merge with defaults
-        default_qr_config = get_default_config()["qr"]
-        config = {**default_qr_config, **config.get("qr", config)}
-    
-    # Compress data if it's large
-    if len(data) > 100:
-        compressed = gzip.compress(data.encode())
-        data = base64.b64encode(compressed).decode()
-        data = "GZ:" + data  # Prefix to indicate compression
-    
-    qr = qrcode.QRCode(
-        version=config["version"],
-        error_correction=getattr(qrcode.constants, f"ERROR_CORRECT_{config['error_correction']}"),
-        box_size=config["box_size"],
-        border=config["border"],
-    )
-    
-    qr.add_data(data)
-    qr.make(fit=True)
-    
-    img = qr.make_image(fill_color=config["fill_color"], back_color=config["back_color"])
-    return img
-
-
-def decode_qr(image: np.ndarray) -> Optional[str]:
-    """
-    Decode QR code from image
-    
-    Args:
-        image: OpenCV image array
-        
-    Returns:
-        Decoded string or None if decode fails
-    """
-    try:
-        # Initialize OpenCV QR code detector
-        detector = cv2.QRCodeDetector()
-        
-        # Detect and decode
-        data, bbox, straight_qrcode = detector.detectAndDecode(image)
-        
-        if data:
-            # Check if data was compressed
-            if data.startswith("GZ:"):
-                compressed_data = base64.b64decode(data[3:])
-                data = gzip.decompress(compressed_data).decode()
-            
-            return data
-    except Exception as e:
-        logger.warning(f"QR decode failed: {e}")
-    return None
-
-
-def create_video_writer(output_path: str, config: Optional[Dict[str, Any]] = None) -> cv2.VideoWriter:
-    """
-    Create OpenCV video writer
-    
-    Args:
-        output_path: Path to output video file
-        config: Optional video configuration
-        
-    Returns:
-        cv2.VideoWriter instance
-    """
-    if config is None:
-        config = get_default_config()["video"]
-    
-    fourcc = cv2.VideoWriter_fourcc(*config["codec"])
-    return cv2.VideoWriter(
-        output_path,
-        fourcc,
-        config["fps"],
-        (config["frame_width"], config["frame_height"])
-    )
-
-
-def qr_to_frame(qr_image: Image.Image, frame_size: Tuple[int, int]) -> np.ndarray:
-    """
-    Convert QR PIL image to video frame
-    
-    Args:
-        qr_image: PIL Image of QR code
-        frame_size: Target frame size (width, height)
-        
-    Returns:
-        OpenCV frame array
-    """
-    # Resize to fit frame while maintaining aspect ratio
-    qr_image = qr_image.resize(frame_size, Image.Resampling.LANCZOS)
-    
-    # Convert to RGB mode if necessary (handles L, P, etc. modes)
-    if qr_image.mode != 'RGB':
-        qr_image = qr_image.convert('RGB')
-    
-    # Convert to numpy array and ensure proper dtype
-    img_array = np.array(qr_image, dtype=np.uint8)
-    
-    # Convert to OpenCV format
-    frame = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    return frame
-
-
-def extract_frame(video_path: str, frame_number: int) -> Optional[np.ndarray]:
-    """
-    Extract single frame from video
-    
-    Args:
-        video_path: Path to video file
-        frame_number: Frame index to extract
-        
-    Returns:
-        OpenCV frame array or None
-    """
-    cap = cv2.VideoCapture(video_path)
-    try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret, frame = cap.read()
-        if ret:
-            return frame
-    finally:
-        cap.release()
-    return None
-
-
-@lru_cache(maxsize=1000)
-def extract_and_decode_cached(video_path: str, frame_number: int) -> Optional[str]:
-    """
-    Extract and decode frame with caching
-    """
-    frame = extract_frame(video_path, frame_number)
-    if frame is not None:
-        return decode_qr(frame)
-    return None
-
-
-def batch_extract_frames(video_path: str, frame_numbers: List[int], 
-                        max_workers: int = 4) -> List[Tuple[int, Optional[np.ndarray]]]:
-    """
-    Extract multiple frames in parallel
-    
-    Args:
-        video_path: Path to video file
-        frame_numbers: List of frame indices
-        max_workers: Number of parallel workers
-        
-    Returns:
-        List of (frame_number, frame) tuples
-    """
-    results = []
-    
-    # Sort frame numbers for sequential access
-    sorted_frames = sorted(frame_numbers)
-    
-    cap = cv2.VideoCapture(video_path)
-    try:
-        for frame_num in sorted_frames:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-            ret, frame = cap.read()
-            results.append((frame_num, frame if ret else None))
-    finally:
-        cap.release()
-    
-    return results
-
-
-def parallel_decode_qr(frames: List[Tuple[int, np.ndarray]], 
-                      max_workers: int = 4) -> List[Tuple[int, Optional[str]]]:
-    """
-    Decode multiple QR frames in parallel
-    
-    Args:
-        frames: List of (frame_number, frame) tuples
-        max_workers: Number of parallel workers
-        
-    Returns:
-        List of (frame_number, decoded_data) tuples
-    """
-    def decode_frame(item):
-        frame_num, frame = item
-        if frame is not None:
-            data = decode_qr(frame)
-            return (frame_num, data)
-        return (frame_num, None)
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(decode_frame, frames))
-    
-    return results
-
-
-def batch_extract_and_decode(video_path: str, frame_numbers: List[int], 
-                            max_workers: int = 4, show_progress: bool = False) -> Dict[int, str]:
-    """
-    Extract and decode multiple frames efficiently
-    
-    Args:
-        video_path: Path to video file
-        frame_numbers: List of frame indices
-        max_workers: Number of parallel workers
-        show_progress: Show progress bar
-        
-    Returns:
-        Dict mapping frame_number to decoded data
-    """
-    # Extract frames
-    frames = batch_extract_frames(video_path, frame_numbers)
-    
-    # Decode in parallel
-    if show_progress:
-        frames = tqdm(frames, desc="Decoding QR frames")
-    
-    decoded = parallel_decode_qr(frames, max_workers)
-    
-    # Build result dict
-    result = {}
-    for frame_num, data in decoded:
-        if data is not None:
-            result[frame_num] = data
-    
-    return result
-
-
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
     """
-    Split text into overlapping chunks
+    Split text into overlapping chunks.
+    Tries to break at sentence boundaries for cleaner cuts.
     
     Args:
-        text: Text to chunk
-        chunk_size: Target chunk size in characters
-        overlap: Overlap between chunks
+        text: Text to chunk.
+        chunk_size: Target chunk size in characters.
+        overlap: Overlap between chunks.
         
     Returns:
-        List of text chunks
+        List of text chunks.
     """
     chunks = []
     start = 0
-    
-    while start < len(text):
+    text_len = len(text)
+
+    if text_len == 0:
+        return []
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive.")
+    if overlap < 0:
+        raise ValueError("overlap cannot be negative.")
+    if overlap >= chunk_size:
+        logger.warning(f"Overlap ({overlap}) is greater than or equal to chunk_size ({chunk_size}). This may lead to inefficient chunking or errors.")
+        # Fallback to non-overlapping if overlap is problematic, or raise error
+        # For now, let it proceed but it might produce many identical chunks or behave unexpectedly.
+
+    while start < text_len:
         end = start + chunk_size
-        chunk = text[start:end]
         
-        # Try to break at sentence boundary
-        if end < len(text):
-            last_period = chunk.rfind('.')
-            if last_period > chunk_size * 0.8:
-                end = start + last_period + 1
-                chunk = text[start:end]
+        current_segment_text = text[start:end] # This is the potential chunk up to chunk_size
         
-        chunks.append(chunk.strip())
-        start = end - overlap
-    
+        actual_end = end
+        
+        if end < text_len: # If we are not at the end of the text, try to find a better break point
+            # Search for sentence terminators (. ! ?) in the latter part of the segment
+            # Prefer breaks that are not too early in the chunk.
+            # Search from the end of `current_segment_text` backwards.
+            
+            best_break_offset = -1
+
+            for i in range(len(current_segment_text) - 1, 0, -1):
+                char = current_segment_text[i]
+                if char in ['.', '!', '?']:
+                    # Check if this punctuation is followed by a space or is at the end of the segment
+                    is_sentence_boundary = (i == len(current_segment_text) - 1) or \
+                                           (i + 1 < len(current_segment_text) and current_segment_text[i+1].isspace())
+
+                    if is_sentence_boundary:
+                        # Avoid breaking in numbers like "3.14" or common abbreviations like "U.S."
+                        # This is a simple heuristic. More robust sentence tokenization is complex.
+                        if char == '.':
+                            if i > 0 and current_segment_text[i-1].isdigit() and \
+                               (i + 1 < len(current_segment_text) and current_segment_text[i+1].isdigit()):
+                                continue # Likely a number, not a sentence end
+                            if i > 0 and current_segment_text[i-1].isupper() and \
+                               (i + 1 < len(current_segment_text) and current_segment_text[i+1].isalpha()): # e.g. U.S. President
+                                # This is tricky, could be an initial. For simplicity, we might break.
+                                # Or decide not to break on single letter followed by period then letter.
+                                pass # Allow break for now
+
+                        # Found a potential break point. We want the one closest to original `end`.
+                        # Since we iterate backwards, the first one found is the latest one.
+                        best_break_offset = i
+                        break
+
+            if best_break_offset != -1:
+                # Check if using this break point is "reasonable"
+                # e.g., the chunk should not be too small (e.g., less than overlap size)
+                if (start + best_break_offset + 1) > (start + overlap * 0.5): # Ensure chunk is not excessively small
+                    actual_end = start + best_break_offset + 1
+                # else, we stick with the original 'end' based on chunk_size
+        
+        final_chunk_text = text[start:actual_end]
+        stripped_chunk = final_chunk_text.strip()
+        
+        if stripped_chunk: # Only add non-empty chunks
+            chunks.append(stripped_chunk)
+        
+        next_start = actual_end - overlap
+        
+        if next_start <= start : # Ensure progress is made
+            if actual_end >= text_len : # If we've processed till the end
+                 break
+            next_start = start + 1 # Force move forward by at least one char if no other progress
+            if next_start > actual_end : # If overlap is too large, just move to end of current chunk
+                 next_start = actual_end
+
+
+        start = next_start
+        if start >= text_len: # Condition to ensure we don't loop if next_start calculation is off
+            break
+
     return chunks
-
-
-def save_index(index_data: Dict[str, Any], output_path: str):
-    """Save index data to JSON file"""
-    with open(output_path, 'w') as f:
-        json.dump(index_data, f, indent=2)
-
-
-def load_index(index_path: str) -> Dict[str, Any]:
-    """Load index data from JSON file"""
-    with open(index_path, 'r') as f:
-        return json.load(f)

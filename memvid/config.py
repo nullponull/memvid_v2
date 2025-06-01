@@ -46,6 +46,9 @@ CONTEXT_CHUNKS_PER_QUERY = 5
 PREFETCH_FRAMES = 50
 DECODE_TIMEOUT = 10  # seconds
 
+# Database settings
+DEFAULT_DATABASE_PATH = "memvid_memory.db" # Default name for the SQLite DB file
+
 def get_default_config() -> Dict[str, Any]:
     """Get default configuration dictionary"""
     return {
@@ -90,5 +93,8 @@ def get_default_config() -> Dict[str, Any]:
         "performance": {
             "prefetch_frames": PREFETCH_FRAMES,
             "decode_timeout": DECODE_TIMEOUT,
+        },
+        "database": { # New section
+            "path": DEFAULT_DATABASE_PATH
         }
     }

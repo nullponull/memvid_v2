@@ -2,286 +2,181 @@
 MemvidRetriever - Fast semantic search, QR frame extraction, and context assembly
 """
 
-import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any, Optional # Removed Tuple as search result format changed
 import time
-from functools import lru_cache
-import cv2
+from functools import lru_cache # Ensure this is present and used
 
-from .utils import (
-    extract_frame, decode_qr, batch_extract_and_decode,
-    extract_and_decode_cached
-)
+# Removed cv2 and concurrent.futures related imports
+# Removed QR/frame specific utils
 from .index import IndexManager
 from .config import get_default_config
+from .database import DatabaseManager # Added DatabaseManager
 
 logger = logging.getLogger(__name__)
 
 
 class MemvidRetriever:
-    """Fast retrieval from QR code videos using semantic search"""
+    """Retrieves text chunks from a database using semantic search."""
     
-    def __init__(self, video_file: str, index_file: str, 
+    def __init__(self, index_file_path_prefix: str,
                  config: Optional[Dict[str, Any]] = None):
         """
-        Initialize MemvidRetriever
+        Initialize MemvidRetriever.
         
         Args:
-            video_file: Path to QR code video
-            index_file: Path to index file
-            config: Optional configuration
+            index_file_path_prefix: Path prefix for the FAISS index files.
+            config: Optional configuration dictionary.
         """
-        self.video_file = str(Path(video_file).absolute())
-        self.index_file = str(Path(index_file).absolute())
+        self.index_file_path_prefix = index_file_path_prefix
         self.config = config or get_default_config()
         
-        # Load index
+        # Initialize IndexManager
         self.index_manager = IndexManager(self.config)
-        self.index_manager.load(str(Path(index_file).with_suffix('')))
+        self.index_manager.load(index_file_path_prefix)
         
-        # Cache for decoded frames
-        self._frame_cache = {}
-        self._cache_size = self.config["retrieval"]["cache_size"]
+        # Initialize DatabaseManager
+        db_config = self.config.get("database", {})
+        db_path = db_config.get("path")
+        self.db_manager = DatabaseManager(db_path=db_path)
         
-        # Verify video file
-        self._verify_video()
+        # Caching for DB chunk details is handled by _get_db_chunk_details method's lru_cache
         
-        logger.info(f"Initialized retriever with {self.index_manager.get_stats()['total_chunks']} chunks")
-    
-    def _verify_video(self):
-        """Verify video file is accessible"""
-        cap = cv2.VideoCapture(self.video_file)
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video file: {self.video_file}")
-        
-        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        
-        logger.info(f"Video has {self.total_frames} frames at {self.fps} fps")
-    
+        logger.info(f"Initialized retriever. Index: {index_file_path_prefix}, DB: {self.db_manager.db_path}")
+
+    @lru_cache(maxsize=1000) # Default cache size, consider making configurable via self.config
+    def _get_db_chunk_details(self, chunk_id: int) -> Optional[Dict[str, Any]]:
+        """Fetches chunk details (text & metadata) from DB. Cached."""
+        try:
+            return self.db_manager.get_chunk_by_id(chunk_id)
+        except Exception as e:
+            logger.error(f"Error fetching chunk {chunk_id} from DB: {e}")
+            return None
+
     def search(self, query: str, top_k: int = 5) -> List[str]:
         """
-        Search for relevant chunks using semantic search
+        Search for relevant chunks using semantic search.
         
         Args:
-            query: Search query
-            top_k: Number of results to return
+            query: Search query.
+            top_k: Number of results to return.
             
         Returns:
-            List of relevant text chunks
+            List of relevant text chunks.
         """
         start_time = time.time()
         
-        # Semantic search in index
-        search_results = self.index_manager.search(query, top_k)
+        # search_results_ids is List[(chunk_id: int, distance: float)]
+        search_results_ids = self.index_manager.search(query, top_k)
         
-        # Extract unique frame numbers
-        frame_numbers = list(set(result[2]["frame"] for result in search_results))
-        
-        # Decode frames in parallel
-        decoded_frames = self._decode_frames_parallel(frame_numbers)
-        
-        # Extract text from decoded data
-        results = []
-        for chunk_id, distance, metadata in search_results:
-            frame_num = metadata["frame"]
-            if frame_num in decoded_frames:
-                try:
-                    chunk_data = json.loads(decoded_frames[frame_num])
-                    results.append(chunk_data["text"])
-                except (json.JSONDecodeError, KeyError):
-                    # Fallback to metadata text
-                    results.append(metadata["text"])
+        results_text = []
+        for chunk_id, distance in search_results_ids:
+            chunk_details = self._get_db_chunk_details(chunk_id)
+            if chunk_details and "text_content" in chunk_details:
+                results_text.append(chunk_details["text_content"])
+            elif chunk_details:
+                logger.warning(f"Chunk {chunk_id} details fetched but missing 'text_content'.")
             else:
-                # Fallback to metadata text if decode failed
-                results.append(metadata["text"])
-        
+                logger.warning(f"Could not retrieve details for chunk_id {chunk_id} from database.")
+
         elapsed = time.time() - start_time
-        logger.info(f"Search completed in {elapsed:.3f}s for query: '{query[:50]}...'")
-        
-        return results
+        logger.info(f"Search for '{query[:50]}...' (top {top_k}) completed in {elapsed:.3f}s, found {len(results_text)} results.")
+        return results_text
     
     def get_chunk_by_id(self, chunk_id: int) -> Optional[str]:
         """
-        Get specific chunk by ID
+        Get specific chunk text by ID from database.
         
         Args:
-            chunk_id: Chunk ID
+            chunk_id: Chunk ID.
             
         Returns:
-            Chunk text or None
+            Chunk text or None if not found or error.
         """
-        metadata = self.index_manager.get_chunk_by_id(chunk_id)
-        if metadata:
-            frame_num = metadata["frame"]
-            decoded = self._decode_single_frame(frame_num)
-            if decoded:
-                try:
-                    chunk_data = json.loads(decoded)
-                    return chunk_data["text"]
-                except (json.JSONDecodeError, KeyError):
-                    pass
-            return metadata["text"]
-        return None
-    
-    def _decode_single_frame(self, frame_number: int) -> Optional[str]:
-        """Decode single frame with caching"""
-        # Check cache
-        if frame_number in self._frame_cache:
-            return self._frame_cache[frame_number]
-        
-        # Decode frame
-        result = extract_and_decode_cached(self.video_file, frame_number)
-        
-        # Update cache
-        if result and len(self._frame_cache) < self._cache_size:
-            self._frame_cache[frame_number] = result
-        
-        return result
-    
-    def _decode_frames_parallel(self, frame_numbers: List[int]) -> Dict[int, str]:
-        """
-        Decode multiple frames in parallel
-        
-        Args:
-            frame_numbers: List of frame numbers to decode
-            
-        Returns:
-            Dict mapping frame number to decoded data
-        """
-        # Check cache first
-        results = {}
-        uncached_frames = []
-        
-        for frame_num in frame_numbers:
-            if frame_num in self._frame_cache:
-                results[frame_num] = self._frame_cache[frame_num]
-            else:
-                uncached_frames.append(frame_num)
-        
-        if not uncached_frames:
-            return results
-        
-        # Decode uncached frames in parallel
-        max_workers = self.config["retrieval"]["max_workers"]
-        decoded = batch_extract_and_decode(
-            self.video_file, 
-            uncached_frames, 
-            max_workers=max_workers
-        )
-        
-        # Update results and cache
-        for frame_num, data in decoded.items():
-            results[frame_num] = data
-            if len(self._frame_cache) < self._cache_size:
-                self._frame_cache[frame_num] = data
-        
-        return results
-    
+        chunk_details = self._get_db_chunk_details(chunk_id)
+        return chunk_details["text_content"] if chunk_details else None
+
     def search_with_metadata(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        Search with full metadata
+        Search for relevant chunks and return them with their metadata and scores.
         
         Args:
-            query: Search query
-            top_k: Number of results
+            query: Search query.
+            top_k: Number of results to return.
             
         Returns:
-            List of result dictionaries with text, score, and metadata
+            List of result dictionaries, each containing "text", "score", "chunk_id", and "metadata".
         """
         start_time = time.time()
+        search_results_ids = self.index_manager.search(query, top_k) # List[(id, dist)]
         
-        # Semantic search
-        search_results = self.index_manager.search(query, top_k)
-        
-        # Extract frame numbers
-        frame_numbers = list(set(result[2]["frame"] for result in search_results))
-        
-        # Decode frames
-        decoded_frames = self._decode_frames_parallel(frame_numbers)
-        
-        # Build results with metadata
         results = []
-        for chunk_id, distance, metadata in search_results:
-            frame_num = metadata["frame"]
-            
-            # Get text from decoded frame or metadata
-            if frame_num in decoded_frames:
-                try:
-                    chunk_data = json.loads(decoded_frames[frame_num])
-                    text = chunk_data["text"]
-                except (json.JSONDecodeError, KeyError):
-                    text = metadata["text"]
+        for chunk_id, distance in search_results_ids:
+            chunk_details = self._get_db_chunk_details(chunk_id)
+            if chunk_details:
+                results.append({
+                    "text": chunk_details["text_content"],
+                    "score": 1.0 / (1.0 + distance) if distance >= 0 else 0,
+                    "chunk_id": chunk_id,
+                    "metadata": chunk_details.get("metadata", {})
+                })
             else:
-                text = metadata["text"]
-            
-            results.append({
-                "text": text,
-                "score": 1.0 / (1.0 + distance),  # Convert distance to similarity score
-                "chunk_id": chunk_id,
-                "frame": frame_num,
-                "metadata": metadata
-            })
-        
+                logger.warning(f"Could not retrieve details for chunk_id {chunk_id} in search_with_metadata.")
+
         elapsed = time.time() - start_time
-        logger.info(f"Search with metadata completed in {elapsed:.3f}s")
-        
+        logger.info(f"Search_with_metadata for '{query[:50]}...' (top {top_k}) completed in {elapsed:.3f}s, found {len(results)} results.")
         return results
     
     def get_context_window(self, chunk_id: int, window_size: int = 2) -> List[str]:
         """
-        Get chunk with surrounding context
+        Get a central chunk and its surrounding context from the database.
         
         Args:
-            chunk_id: Central chunk ID
-            window_size: Number of chunks before/after to include
+            chunk_id: ID of the central chunk.
+            window_size: Number of chunks to retrieve before and after the central chunk.
             
         Returns:
-            List of chunks in context window
+            List of chunk texts, including the central chunk and its context.
         """
-        chunks = []
-        
-        # Get chunks in window
+        context_chunks = []
+        # Iterate from -window_size to +window_size relative to the target chunk_id
+        # Note: Assumes chunk_ids are somewhat contiguous for context, which might not always be true.
+        # If chunk_ids can be arbitrary, this method might need rethinking or relying on metadata (e.g., sequence numbers).
+        # For now, it assumes that `chunk_id + offset` is a meaningful way to get neighbors.
         for offset in range(-window_size, window_size + 1):
-            target_id = chunk_id + offset
-            chunk = self.get_chunk_by_id(target_id)
-            if chunk:
-                chunks.append(chunk)
-        
-        return chunks
-    
-    def prefetch_frames(self, frame_numbers: List[int]):
-        """
-        Prefetch frames into cache for faster retrieval
-        
-        Args:
-            frame_numbers: List of frame numbers to prefetch
-        """
-        # Only prefetch frames not in cache
-        to_prefetch = [f for f in frame_numbers if f not in self._frame_cache]
-        
-        if to_prefetch:
-            logger.info(f"Prefetching {len(to_prefetch)} frames...")
-            decoded = self._decode_frames_parallel(to_prefetch)
-            logger.info(f"Prefetched {len(decoded)} frames")
+            current_chunk_id = chunk_id + offset
+            # We could add a check here: if offset is 0, ensure it's the actual target chunk.
+            # However, get_chunk_by_id will return None if the ID doesn't exist.
+            chunk_text = self.get_chunk_by_id(current_chunk_id)
+            if chunk_text:
+                context_chunks.append(chunk_text)
+
+        return context_chunks
     
     def clear_cache(self):
-        """Clear frame cache"""
-        self._frame_cache.clear()
-        extract_and_decode_cached.cache_clear()
-        logger.info("Cleared frame cache")
+        """Clear retriever's chunk cache."""
+        if hasattr(self._get_db_chunk_details, 'cache_clear'):
+            self._get_db_chunk_details.cache_clear()
+            logger.info("Cleared retriever's chunk cache.")
+        else:
+            logger.warning("Retriever's _get_db_chunk_details method does not have cache_clear().")
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get retriever statistics"""
+        """Get retriever statistics."""
+        cache_info_dict = {}
+        if hasattr(self._get_db_chunk_details, 'cache_info'):
+            ci = self._get_db_chunk_details.cache_info()
+            cache_info_dict = {
+                "hits": ci.hits, "misses": ci.misses,
+                "maxsize": ci.maxsize, "currsize": ci.currsize
+            }
+        else:
+            cache_info_dict = {"info": "Cache info not available for _get_db_chunk_details."}
+
         return {
-            "video_file": self.video_file,
-            "total_frames": self.total_frames,
-            "fps": self.fps,
-            "cache_size": len(self._frame_cache),
-            "max_cache_size": self._cache_size,
+            "index_file_prefix": self.index_file_path_prefix,
+            "db_path": str(self.db_manager.db_path),
+            "cache_stats": cache_info_dict,
             "index_stats": self.index_manager.get_stats()
         }
