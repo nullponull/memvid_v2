@@ -2,23 +2,22 @@
 MemvidEncoder - Handles chunking and QR video creation
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from tqdm import tqdm
-import cv2
-import numpy as np
+import numpy as np # Kept for get_stats, though its usage might change
 
-from .utils import encode_to_qr, qr_to_frame, create_video_writer, chunk_text
+from .utils import chunk_text # Removed QR/video utils
 from .index import IndexManager
 from .config import get_default_config
+from .database import DatabaseManager # Added DatabaseManager
 
 logger = logging.getLogger(__name__)
 
 
 class MemvidEncoder:
-    """Encodes text chunks into QR code videos with searchable index"""
+    """Stores text chunks in a database and builds a searchable index."""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
@@ -28,205 +27,219 @@ class MemvidEncoder:
             config: Optional configuration dictionary
         """
         self.config = config or get_default_config()
-        self.chunks = []
+        db_config = self.config.get("database", {})
+        db_path = db_config.get("path") # Uses DEFAULT_DATABASE_PATH from config if not overridden
+        self.db_manager = DatabaseManager(db_path=db_path)
         self.index_manager = IndexManager(self.config)
         
-    def add_chunks(self, chunks: List[str]):
+    def add_chunks(self, chunks: List[str], metadata_list: Optional[List[Dict[str, Any]]] = None):
         """
-        Add text chunks to be encoded
+        Add text chunks to the database.
         
         Args:
-            chunks: List of text chunks
+            chunks: List of text chunks.
+            metadata_list: Optional list of metadata dictionaries, one per chunk.
         """
-        self.chunks.extend(chunks)
-        logger.info(f"Added {len(chunks)} chunks. Total: {len(self.chunks)}")
-    
-    def add_text(self, text: str, chunk_size: int = 500, overlap: int = 50):
+        if metadata_list and len(metadata_list) != len(chunks):
+            raise ValueError("If metadata_list is provided, it must have the same length as chunks.")
+
+        num_added = 0
+        for i, chunk_text_content in enumerate(chunks):
+            meta = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
+            try:
+                self.db_manager.add_chunk(chunk_text_content, meta)
+                num_added += 1
+            except Exception as e:
+                logger.error(f"Failed to add chunk to DB: {chunk_text_content[:50]}... Error: {e}")
+        logger.info(f"Attempted to add {len(chunks)} chunks to DB. Successfully added: {num_added}")
+
+    def add_text(self, text: str, chunk_size: int = 500, overlap: int = 50, metadata: Optional[Dict[str, Any]] = None):
         """
-        Add text and automatically chunk it
+        Add text, automatically chunk it, and store it in the database.
         
         Args:
-            text: Text to chunk and add
-            chunk_size: Target chunk size
-            overlap: Overlap between chunks
+            text: Text to chunk and add.
+            chunk_size: Target chunk size.
+            overlap: Overlap between chunks.
+            metadata: Optional metadata dictionary to associate with all created chunks.
         """
-        chunks = chunk_text(text, chunk_size, overlap)
-        self.add_chunks(chunks)
+        new_chunks = chunk_text(text, chunk_size, overlap)
+        metadata_list_for_chunks = [metadata.copy() if metadata else {} for _ in new_chunks]
+        self.add_chunks(new_chunks, metadata_list_for_chunks)
     
     def add_pdf(self, pdf_path: str, chunk_size: int = 800, overlap: int = 100):
         """
-        Extract text from PDF and add as chunks
+        Extract text from PDF, add as chunks to the database with metadata.
         
         Args:
-            pdf_path: Path to PDF file
-            chunk_size: Target chunk size (default larger for books)
-            overlap: Overlap between chunks
+            pdf_path: Path to PDF file.
+            chunk_size: Target chunk size.
+            overlap: Overlap between chunks.
         """
         try:
             import PyPDF2
         except ImportError:
+            logger.error("PyPDF2 is required for PDF support. Install with: pip install PyPDF2")
             raise ImportError("PyPDF2 is required for PDF support. Install with: pip install PyPDF2")
         
         if not Path(pdf_path).exists():
+            logger.error(f"PDF file not found: {pdf_path}")
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
         text = ""
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            num_pages = len(pdf_reader.pages)
+        num_pages = 0
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                num_pages = len(pdf_reader.pages)
+
+                logger.info(f"Extracting text from {num_pages} pages of {Path(pdf_path).name}")
+
+                for page_num in range(num_pages):
+                    page = pdf_reader.pages[page_num]
+                    page_text = page.extract_text()
+                    if page_text: # Ensure text was extracted
+                        text += page_text + "\n\n" # Add double newline to mark page breaks more clearly if needed
             
-            logger.info(f"Extracting text from {num_pages} pages of {Path(pdf_path).name}")
-            
-            for page_num in range(num_pages):
-                page = pdf_reader.pages[page_num]
-                page_text = page.extract_text()
-                text += page_text + "\n\n"
-        
-        if text.strip():
-            self.add_text(text, chunk_size, overlap)
-            logger.info(f"Added PDF content: {len(text)} characters from {Path(pdf_path).name}")
-        else:
-            logger.warning(f"No text extracted from PDF: {pdf_path}")
-    
-    def build_video(self, output_file: str, index_file: str, 
-                    show_progress: bool = True) -> Dict[str, Any]:
+            if text.strip():
+                pdf_metadata = {"source_pdf": Path(pdf_path).name, "pdf_total_pages": num_pages}
+                self.add_text(text, chunk_size, overlap, metadata=pdf_metadata)
+                logger.info(f"Added PDF content: {len(text)} characters from {Path(pdf_path).name}")
+            else:
+                logger.warning(f"No text extracted from PDF: {pdf_path}")
+        except Exception as e:
+            logger.error(f"Error processing PDF {pdf_path}: {e}")
+            # Potentially re-raise or handle as per application needs
+            raise
+
+    def build_memory(self, index_file_path_prefix: str, show_progress: bool = True) -> Dict[str, Any]:
         """
-        Build QR code video and index from chunks
+        Ensures all added chunks are stored and builds/updates the search index.
         
         Args:
-            output_file: Path to output video file
-            index_file: Path to output index file
-            show_progress: Show progress bar
+            index_file_path_prefix: Prefix for the output index file (e.g., "my_memory_index").
+                                     Actual files will be like "my_memory_index.faiss" and "my_memory_index_meta.json".
+            show_progress: Show progress bar for indexing.
             
         Returns:
-            Dictionary with build statistics
+            Dictionary with build statistics.
         """
-        if not self.chunks:
-            raise ValueError("No chunks to encode. Use add_chunks() first.")
+        logger.info("Building memory: Ensuring all chunks are stored and indexing...")
+
+        # Chunks are already added to DB via add_chunk/add_text/add_pdf.
+        # Indexing (this method will be properly defined in IndexManager in the next plan step):
+        if hasattr(self.index_manager, 'build_index_from_db'):
+            self.index_manager.build_index_from_db(self.db_manager, show_progress=show_progress)
+        else:
+            logger.warning("IndexManager does not yet have 'build_index_from_db'. Indexing skipped in MemvidEncoder.")
+
+        self.index_manager.save(index_file_path_prefix) # Saves the FAISS index + its metadata
         
-        output_path = Path(output_file)
-        index_path = Path(index_file)
+        db_stats = {
+            "db_file": str(self.db_manager.db_path),
+            "db_size_mb": self.db_manager.db_path.stat().st_size / (1024 * 1024) if self.db_manager.db_path.exists() else 0,
+        }
         
-        # Ensure output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Building video with {len(self.chunks)} chunks")
-        
-        # Create video writer
-        video_config = self.config["video"]
-        writer = create_video_writer(str(output_path), video_config)
-        
-        frame_numbers = []
-        
-        try:
-            # Generate QR codes and write to video
-            chunks_iter = enumerate(self.chunks)
-            if show_progress:
-                chunks_iter = tqdm(chunks_iter, total=len(self.chunks), desc="Encoding chunks to video")
-            
-            for frame_num, chunk in chunks_iter:
-                # Create metadata for chunk
-                chunk_data = {
-                    "id": frame_num,
-                    "text": chunk,
-                    "frame": frame_num
-                }
-                
-                # Encode to QR
-                qr_image = encode_to_qr(json.dumps(chunk_data), self.config)
-                
-                # Convert to video frame
-                frame = qr_to_frame(qr_image, (video_config["frame_width"], video_config["frame_height"]))
-                
-                # Write frame
-                writer.write(frame)
-                frame_numbers.append(frame_num)
-            
-            # Add chunks to index
-            logger.info("Building search index...")
-            self.index_manager.add_chunks(self.chunks, frame_numbers, show_progress)
-            
-            # Save index
-            self.index_manager.save(str(index_path.with_suffix('')))
-            
-            # Get statistics
-            stats = {
-                "total_chunks": len(self.chunks),
-                "total_frames": len(frame_numbers),
-                "video_file": str(output_path),
-                "index_file": str(index_path),
-                "video_size_mb": output_path.stat().st_size / (1024 * 1024) if output_path.exists() else 0,
-                "fps": video_config["fps"],
-                "duration_seconds": len(frame_numbers) / video_config["fps"],
-                "index_stats": self.index_manager.get_stats()
-            }
-            
-            logger.info(f"Successfully built video: {output_path}")
-            logger.info(f"Video duration: {stats['duration_seconds']:.1f} seconds")
-            logger.info(f"Video size: {stats['video_size_mb']:.1f} MB")
-            
-            return stats
-            
-        finally:
-            writer.release()
-    
+        stats = {
+            "total_chunks_in_db": self.db_manager.get_total_chunks(),
+            "index_file_prefix": index_file_path_prefix,
+            "index_stats": self.index_manager.get_stats(), # IndexManager.get_stats() will also need update
+            "database_stats": db_stats
+        }
+        logger.info(f"Successfully built memory. Index saved with prefix: {index_file_path_prefix}")
+        return stats
+
     def clear(self):
-        """Clear all chunks"""
-        self.chunks = []
-        self.index_manager = IndexManager(self.config)
-        logger.info("Cleared all chunks")
+        """Clear all chunks from the database and reset the index."""
+        self.db_manager.clear_all_chunks()
+        if hasattr(self.index_manager, 'clear_index'):
+            self.index_manager.clear_index()
+        else:
+            logger.warning("IndexManager does not yet have 'clear_index'. Re-initializing IndexManager.")
+            self.index_manager = IndexManager(self.config) # Fallback
+        logger.info("Cleared all chunks from database and reset index manager.")
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get encoder statistics"""
+        """Get encoder and database statistics"""
         return {
-            "total_chunks": len(self.chunks),
-            "total_characters": sum(len(chunk) for chunk in self.chunks),
-            "avg_chunk_size": np.mean([len(chunk) for chunk in self.chunks]) if self.chunks else 0,
-            "config": self.config
+            "total_chunks_in_db": self.db_manager.get_total_chunks(),
+            # "total_characters_in_db": "N/A (requires iterating DB or pre-calculation)",
+            # "avg_chunk_size_in_db": "N/A (requires iterating DB or pre-calculation)",
+            "config": self.config,
+            "db_path": str(self.db_manager.db_path)
         }
     
     @classmethod
     def from_file(cls, file_path: str, chunk_size: int = 500, 
                   overlap: int = 50, config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
         """
-        Create encoder from text file
+        Create encoder from text file, adding content to the database.
         
         Args:
-            file_path: Path to text file
-            chunk_size: Target chunk size
-            overlap: Overlap between chunks
-            config: Optional configuration
+            file_path: Path to text file.
+            chunk_size: Target chunk size.
+            overlap: Overlap between chunks.
+            config: Optional configuration.
             
         Returns:
-            MemvidEncoder instance with chunks loaded
+            MemvidEncoder instance with content loaded.
         """
         encoder = cls(config)
+        file_p = Path(file_path)
+        if not file_p.exists():
+            logger.error(f"File not found: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
         
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-        
-        encoder.add_text(text, chunk_size, overlap)
+        try:
+            with open(file_p, 'r', encoding='utf-8') as f:
+                text = f.read()
+
+            if text.strip():
+                file_metadata = {"source_file": file_p.name, "source_path": str(file_p.resolve())}
+                encoder.add_text(text, chunk_size, overlap, metadata=file_metadata)
+                logger.info(f"Successfully processed text file: {file_path}")
+            else:
+                logger.warning(f"File is empty or contains only whitespace: {file_path}")
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
+            raise
         return encoder
     
     @classmethod
     def from_documents(cls, documents: List[str], chunk_size: int = 500,
-                      overlap: int = 50, config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
+                      overlap: int = 50, config: Optional[Dict[str, Any]] = None,
+                      metadata_list: Optional[List[Dict[str,Any]]] = None) -> 'MemvidEncoder':
         """
-        Create encoder from list of documents
+        Create encoder from a list of document strings, adding content to the database.
         
         Args:
-            documents: List of document strings
-            chunk_size: Target chunk size
-            overlap: Overlap between chunks
-            config: Optional configuration
+            documents: List of document strings.
+            chunk_size: Target chunk size.
+            overlap: Overlap between chunks.
+            config: Optional configuration.
+            metadata_list: Optional list of metadata dictionaries, one for each document.
+                           If provided, metadata will be associated with chunks from the respective document.
             
         Returns:
-            MemvidEncoder instance with chunks loaded
+            MemvidEncoder instance with content loaded.
         """
         encoder = cls(config)
         
-        for doc in documents:
-            encoder.add_text(doc, chunk_size, overlap)
+        if metadata_list and len(metadata_list) != len(documents):
+            raise ValueError("If metadata_list is provided, it must have the same length as documents.")
+
+        for i, doc_text in enumerate(documents):
+            doc_metadata = {}
+            if metadata_list and i < len(metadata_list):
+                doc_metadata = metadata_list[i].copy() # Use a copy to avoid modification issues
+
+            # Add a default source identifier if not present in provided metadata
+            if "source" not in doc_metadata:
+                 doc_metadata["source"] = f"document_index_{i}"
+
+            if doc_text.strip():
+                encoder.add_text(doc_text, chunk_size, overlap, metadata=doc_metadata)
+            else:
+                logger.warning(f"Document at index {i} is empty or contains only whitespace. Skipping.")
         
         return encoder

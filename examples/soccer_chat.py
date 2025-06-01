@@ -33,23 +33,27 @@ soccer_chunks = [
     "Neymar's €222 million transfer from Barcelona to PSG in 2017 is still the world record."
 ]
 
-# Build memory video
-video_path = "output/soccer_memory.mp4"
-index_path = "output/soccer_memory_index.json"
+# Build memory (DB + FAISS index)
+# video_path is no longer used.
+index_file_path_prefix = "output/soccer_memory_index" # Prefix for .faiss and .indexinfo.json
 
 # Create output directory with subdirectory for sessions
-os.makedirs("output/soccer_chat", exist_ok=True)
+os.makedirs("output/soccer_chat", exist_ok=True) # For chat session exports
 
-# Encode chunks to video
+# Encode chunks to database and build FAISS index
 encoder = MemvidEncoder()
+print("Adding soccer chunks to memory...")
 encoder.add_chunks(soccer_chunks)
-encoder.build_video(video_path, index_path)
-print(f"Created soccer memory video: {video_path}")
+print(f"Building memory files with prefix: {index_file_path_prefix}...")
+encoder.build_memory(index_file_path_prefix) # Changed from build_video
+print(f"Created soccer memory (DB and index files with prefix: {index_file_path_prefix})")
 
-api_key = "your-api-key-here"
+# API key handling
+api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     print("\nNote: Set OPENAI_API_KEY environment variable for full LLM responses.")
-    print("Without it, you'll only see raw context chunks.\n")
+    print("Without it, you'll only see raw context chunks or LLM-less responses.\n")
 
 # Chat with the memory - interactive session with custom session directory
-chat_with_memory(video_path, index_path, api_key=api_key, session_dir="output/soccer_chat")
+print("\n⚽ Chat about soccer! Ask questions about the provided facts.")
+chat_with_memory(index_file_path_prefix, api_key=api_key, session_dir="output/soccer_chat")

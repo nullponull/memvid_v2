@@ -9,8 +9,7 @@ from .chat import MemvidChat
 
 
 def chat_with_memory(
-    video_file: str,
-    index_file: str,
+    index_file_path_prefix: str, # Changed
     api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     show_stats: bool = True,
@@ -19,17 +18,16 @@ def chat_with_memory(
     config: Optional[Dict[str, Any]] = None
 ):
     """
-    Start an interactive chat session with a video memory.
+    Start an interactive chat session with a memory (database + index).
     
     Args:
-        video_file: Path to QR code video
-        index_file: Path to index file
-        api_key: OpenAI API key (or set OPENAI_API_KEY env var)
-        llm_model: LLM model to use (default: gpt-3.5-turbo)
-        show_stats: Show memory stats on startup
-        export_on_exit: Auto-export conversation on exit
-        session_dir: Directory to save session files (default: "output")
-        config: Optional configuration
+        index_file_path_prefix: Path prefix for index files (e.g., 'output/my_memory').
+        api_key: OpenAI API key (or set OPENAI_API_KEY env var).
+        llm_model: LLM model to use (default: gpt-3.5-turbo).
+        show_stats: Show memory stats on startup.
+        export_on_exit: Auto-export conversation on exit.
+        session_dir: Directory to save session files (default: "output").
+        config: Optional configuration.
         
     Commands:
         - 'search <query>': Show raw search results
@@ -41,7 +39,9 @@ def chat_with_memory(
         
     Example:
         >>> from memvid import chat_with_memory
-        >>> chat_with_memory("knowledge.mp4", "knowledge_index.json")
+        >>> # Ensure 'output/my_memory.faiss' and 'output/my_memory.indexinfo.json' exist
+        >>> # and the database (e.g., 'memvid_memory.db') is populated.
+        >>> chat_with_memory("output/my_memory")
     """
     # Set tokenizers parallelism to avoid warning
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -51,27 +51,34 @@ def chat_with_memory(
         session_dir = "output"
     os.makedirs(session_dir, exist_ok=True)
     
-    # Check if files exist
-    if not os.path.exists(video_file):
-        print(f"Error: Video file not found: {video_file}")
+    # Check if index files exist
+    faiss_file_to_check = f"{index_file_path_prefix}.faiss"
+    indexinfo_file_to_check = f"{index_file_path_prefix}.indexinfo.json"
+
+    if not os.path.exists(faiss_file_to_check):
+        print(f"Error: Index FAISS file not found: {faiss_file_to_check}")
+        print(f"Ensure you have run the memory building process and that '{faiss_file_to_check}' and preferably '{indexinfo_file_to_check}' exist.")
         return
-    if not os.path.exists(index_file):
-        print(f"Error: Index file not found: {index_file}")
-        return
-    
+    if not os.path.exists(indexinfo_file_to_check):
+        print(f"Warning: Index info file not found: {indexinfo_file_to_check}. Index might load with default parameters if configuration changed.")
+
     # Initialize chat
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     
     print("Initializing Memvid Chat...")
-    chat = MemvidChat(video_file, index_file, llm_api_key=api_key, llm_model=llm_model, config=config)
+    chat = MemvidChat(index_file_path_prefix, llm_api_key=api_key, llm_model=llm_model, config=config)
     chat.start_session()
     
     # Show stats if requested
     if show_stats:
         stats = chat.get_stats()
-        print(f"\nMemory loaded: {stats['retriever_stats']['index_stats']['total_chunks']} chunks")
-        if stats['llm_available']:
-            print(f"LLM: {stats['llm_model']}")
+        ret_stats = stats.get('retriever_stats', {})
+        idx_stats = ret_stats.get('index_stats', {})
+        print(f"\nMemory loaded: {idx_stats.get('total_indexed_chunks', 'N/A')} chunks indexed.")
+        print(f"  Index path prefix: {ret_stats.get('index_file_prefix', 'N/A')}")
+        print(f"  Database path: {ret_stats.get('db_path', 'N/A')}")
+        if stats.get('llm_available'):
+            print(f"LLM: {stats.get('llm_model', 'N/A')}")
         else:
             print("LLM: Not available (context-only mode)")
     
@@ -104,9 +111,22 @@ def chat_with_memory(
                 
             elif lower_input == 'stats':
                 stats = chat.get_stats()
-                print(f"\nMessages: {stats['message_count']}")
-                print(f"Cache size: {stats['retriever_stats']['cache_size']}")
-                print(f"Video frames: {stats['retriever_stats']['total_frames']}")
+                ret_stats = stats.get('retriever_stats', {})
+                idx_s = ret_stats.get('index_stats', {})
+                cache_s = ret_stats.get('cache_stats', {})
+
+                print(f"\nSession Messages: {stats.get('message_count', 'N/A')}")
+                print(f"LLM Model: {stats.get('llm_model', 'N/A')} ({'Available' if stats.get('llm_available') else 'Not Available'})")
+                print(f"Retriever:")
+                print(f"  Index Path Prefix: {ret_stats.get('index_file_prefix', 'N/A')}")
+                print(f"  DB Path: {ret_stats.get('db_path', 'N/A')}")
+                if cache_s.get('info') != 'Cache info not available for _get_db_chunk_details.':
+                     print(f"  Cache: {cache_s.get('currsize',0)}/{cache_s.get('maxsize',0)} (Hits:{cache_s.get('hits',0)}, Misses:{cache_s.get('misses',0)})")
+                else:
+                    print(f"  Cache: {cache_s.get('info', 'N/A')}")
+                print(f"  Index Stats:")
+                for k, v in idx_s.items():
+                    print(f"    {k}: {v}")
                 continue
                 
             elif lower_input == 'export':
@@ -157,25 +177,30 @@ def chat_with_memory(
     print("Goodbye!")
 
 
-def quick_chat(video_file: str, index_file: str, query: str, api_key: Optional[str] = None) -> str:
+def quick_chat(index_file_path_prefix: str, query: str, api_key: Optional[str] = None) -> str:
     """
     Quick one-off query without interactive loop.
     
     Args:
-        video_file: Path to QR code video
-        index_file: Path to index file
-        query: Question to ask
-        api_key: OpenAI API key (optional)
+        index_file_path_prefix: Path prefix for index files.
+        query: Question to ask.
+        api_key: OpenAI API key (optional).
         
     Returns:
-        Response string
+        Response string.
         
     Example:
         >>> from memvid import quick_chat
-        >>> response = quick_chat("knowledge.mp4", "knowledge_index.json", "What is quantum computing?")
+        >>> # Ensure index and DB are set up
+        >>> response = quick_chat("output/my_memory", "What is quantum computing?")
         >>> print(response)
     """
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
     
-    chat = MemvidChat(video_file, index_file, llm_api_key=api_key)
+    # Add basic file check for quick_chat as well for better UX
+    faiss_file_to_check = f"{index_file_path_prefix}.faiss"
+    if not os.path.exists(faiss_file_to_check):
+        return f"Error: Index FAISS file not found: {faiss_file_to_check}. Cannot proceed with quick_chat."
+
+    chat = MemvidChat(index_file_path_prefix, llm_api_key=api_key)
     return chat.chat(query)
