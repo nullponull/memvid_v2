@@ -36,10 +36,13 @@ def main():
         "Voice cloning technology requires only 3 seconds of audio sample.",
     ]
     
-    print("Memvid Example: Building Video Memory")
+    print("Memvid Example: Building Memory (Database + Index)")
     print("=" * 50)
     
     # Create encoder
+    # Configuration for database path can be implicitly handled by MemvidEncoder
+    # using defaults from config.py, or explicitly passed if needed.
+    # For this example, we'll rely on the default (memvid_memory.db in the current dir or as per config).
     encoder = MemvidEncoder()
     
     # Add chunks
@@ -60,39 +63,42 @@ def main():
     
     # Get stats
     stats = encoder.get_stats()
-    print(f"\nEncoder stats:")
-    print(f"  Total chunks: {stats['total_chunks']}")
-    print(f"  Total characters: {stats['total_characters']}")
-    print(f"  Average chunk size: {stats['avg_chunk_size']:.1f} chars")
+    print(f"\nEncoder stats (after adding initial chunks):")
+    print(f"  Total chunks in DB: {stats.get('total_chunks_in_db', 'N/A')}")
+    print(f"  Database path: {stats.get('db_path', 'N/A')}")
     
-    # Build video and index
-    output_dir = "output"
+    # Build memory (FAISS index + metadata json stored alongside, DB is separate)
+    output_dir = "output" # Directory for index files
     os.makedirs(output_dir, exist_ok=True)
     
-    video_file = os.path.join(output_dir, "memory.mp4")
-    index_file = os.path.join(output_dir, "memory_index.json")
+    # index_prefix is used for e.g. memory_index.faiss, memory_index.indexinfo.json
+    index_prefix = os.path.join(output_dir, "memory_index")
     
-    print(f"\nBuilding video: {video_file}")
-    print(f"Building index: {index_file}")
+    print(f"\nBuilding memory with index prefix: {index_prefix}")
+    # The database itself (e.g., memvid_memory.db) will be created/updated based on encoder's config.
     
     start_time = time.time()
-    build_stats = encoder.build_video(video_file, index_file, show_progress=True)
+    build_stats = encoder.build_memory(index_prefix, show_progress=True)
     elapsed = time.time() - start_time
     
     print(f"\nBuild completed in {elapsed:.2f} seconds")
-    print(f"\nVideo stats:")
-    print(f"  Duration: {build_stats['duration_seconds']:.1f} seconds")
-    print(f"  Size: {build_stats['video_size_mb']:.2f} MB")
-    print(f"  FPS: {build_stats['fps']}")
-    print(f"  Chunks per second: {build_stats['total_chunks'] / elapsed:.1f}")
+
+    db_s = build_stats.get("database_stats", {})
+    print(f"\nDatabase stats:")
+    print(f"  DB file: {db_s.get('db_file', 'N/A')}")
+    print(f"  DB size: {db_s.get('db_size_mb', 0):.2f} MB")
+    # 'total_chunks_in_db' is now the primary count from build_stats
+    print(f"  Total chunks in DB (from build_stats): {build_stats.get('total_chunks_in_db', 'N/A')}")
     
-    print("\nIndex stats:")
-    for key, value in build_stats['index_stats'].items():
+    print("\nIndex stats:") # index_stats from build_stats directly
+    idx_s = build_stats.get('index_stats', {})
+    for key, value in idx_s.items():
         print(f"  {key}: {value}")
     
-    print("\nSuccess! Video memory created.")
-    print(f"\nYou can now use this memory with:")
-    print(f"  python examples/chat_memory.py")
+    print("\nSuccess! Memory created.")
+    print(f"  Index files prefix: {build_stats.get('index_file_prefix')}")
+    print(f"  Database file: {db_s.get('db_file')}") # From database_stats
+    print(f"\nYou can now use this memory with chat examples (after they are updated for the new retriever).")
 
 
 if __name__ == "__main__":
