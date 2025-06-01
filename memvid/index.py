@@ -9,10 +9,11 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any, Tuple, Optional
 import logging
 from pathlib import Path
-import pickle
-from tqdm import tqdm
+# import pickle # Removed as it seems unused
+from tqdm import tqdm # Keep for potential future use, or remove if show_progress_bar in encode is enough
 
 from .config import get_default_config
+from .database import DatabaseManager # Added DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,7 @@ class IndexManager:
         # Initialize FAISS index
         self.index = self._create_index()
         
-        # Metadata storage
-        self.metadata = []
-        self.chunk_to_frame = {}  # Maps chunk ID to frame number
-        self.frame_to_chunks = {}  # Maps frame number to chunk IDs
+        # Metadata storage is now handled by DatabaseManager and the FAISS index itself (IDs)
         
     def _create_index(self) -> faiss.Index:
         """Create FAISS index based on configuration"""
@@ -47,170 +45,165 @@ class IndexManager:
             # Exact search - best quality, slower for large datasets
             index = faiss.IndexFlatL2(self.dimension)
         elif index_type == "IVF":
-            # Inverted file index - faster for large datasets
+            nlist = self.config["index"].get("nlist", 100) # Default nlist if not in config
             quantizer = faiss.IndexFlatL2(self.dimension)
-            index = faiss.IndexIVFFlat(quantizer, self.dimension, self.config["index"]["nlist"])
+            index = faiss.IndexIVFFlat(quantizer, self.dimension, nlist)
         else:
             raise ValueError(f"Unknown index type: {index_type}")
             
-        # Add ID mapping for retrieval
+        # Add ID mapping for retrieval. IndexIDMap wraps the actual index.
+        # So self.index will be IndexIDMap, and self.index.index will be the IVF or Flat index.
         index = faiss.IndexIDMap(index)
         return index
-    
-    def add_chunks(self, chunks: List[str], frame_numbers: List[int], 
-                   show_progress: bool = True) -> List[int]:
-        """
-        Add chunks to index with their frame mappings
-        
-        Args:
-            chunks: List of text chunks
-            frame_numbers: Corresponding frame numbers for each chunk
-            show_progress: Show progress bar
-            
-        Returns:
-            List of chunk IDs
-        """
-        if len(chunks) != len(frame_numbers):
-            raise ValueError("Number of chunks must match number of frame numbers")
-        
-        # Generate embeddings
-        logger.info(f"Generating embeddings for {len(chunks)} chunks")
-        
-        # SentenceTransformer expects a list, not an iterator
+
+    def clear_index(self):
+        """Resets the FAISS index to an empty state."""
+        if self.index:
+            self.index.reset() # Clears all vectors from the index
+        # Re-initialize the index to ensure it's clean, especially if it was trained (e.g. IVF)
+        self.index = self._create_index()
+        logger.info("FAISS index has been cleared and re-initialized.")
+
+    def build_index_from_db(self, db_manager: DatabaseManager, show_progress: bool = True):
+        """Builds or rebuilds the FAISS index using chunks from the DatabaseManager."""
+        self.clear_index() # Start with a fresh index
+
+        logger.info("Fetching chunks from database for indexing...")
+        db_chunks = db_manager.get_all_chunks_for_indexing()
+
+        if not db_chunks:
+            logger.warning("No chunks found in the database to index.")
+            return
+
+        chunk_ids_from_db = [item[0] for item in db_chunks]
+        text_contents = [item[1] for item in db_chunks]
+
+        logger.info(f"Generating embeddings for {len(text_contents)} chunks...")
         embeddings = self.embedding_model.encode(
-            chunks, 
+            text_contents,
             show_progress_bar=show_progress,
-            batch_size=32
+            batch_size=self.config.get("retrieval", {}).get("batch_size", 32)
         )
-        embeddings = np.array(embeddings).astype('float32')
+        embeddings_np = np.array(embeddings).astype('float32')
+        chunk_ids_np = np.array(chunk_ids_from_db, dtype=np.int64)
+
+        # Train index if needed (for IVF type)
+        # self.index is IndexIDMap, self.index.index is the actual IndexIVFFlat or IndexFlatL2
+        actual_index = self.index.index
+        if isinstance(actual_index, faiss.IndexIVFFlat) and not actual_index.is_trained:
+            logger.info(f"Training FAISS index (type: IVF, nlist: {actual_index.nlist})...")
+            actual_index.train(embeddings_np)
+            logger.info(f"FAISS index trained. Trained points: {actual_index.ntotal if hasattr(actual_index, 'ntotal') else 'N/A'}")
+
+        logger.info(f"Adding {embeddings_np.shape[0]} vectors to FAISS index...")
+        self.index.add_with_ids(embeddings_np, chunk_ids_np)
+
+        logger.info(f"Successfully built FAISS index. Total indexed chunks: {self.index.ntotal}")
         
-        # Assign IDs
-        start_id = len(self.metadata)
-        chunk_ids = list(range(start_id, start_id + len(chunks)))
-        
-        # Train index if needed (for IVF)
-        if isinstance(self.index.index, faiss.IndexIVFFlat) and not self.index.index.is_trained:
-            logger.info("Training FAISS index...")
-            self.index.index.train(embeddings)
-        
-        # Add to index
-        self.index.add_with_ids(embeddings, np.array(chunk_ids, dtype=np.int64))
-        
-        # Store metadata
-        for i, (chunk, frame_num, chunk_id) in enumerate(zip(chunks, frame_numbers, chunk_ids)):
-            metadata = {
-                "id": chunk_id,
-                "text": chunk,
-                "frame": frame_num,
-                "length": len(chunk)
-            }
-            self.metadata.append(metadata)
-            
-            # Update mappings
-            self.chunk_to_frame[chunk_id] = frame_num
-            if frame_num not in self.frame_to_chunks:
-                self.frame_to_chunks[frame_num] = []
-            self.frame_to_chunks[frame_num].append(chunk_id)
-        
-        logger.info(f"Added {len(chunks)} chunks to index")
-        return chunk_ids
-    
-    def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float, Dict[str, Any]]]:
+        # Store total indexed chunks in DB info table
+        db_manager.set_info("total_indexed_chunks", self.index.ntotal)
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float]]:
         """
-        Search for similar chunks
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            
+        Search for similar chunks.
         Returns:
-            List of (chunk_id, distance, metadata) tuples
+            List of (chunk_id, distance) tuples, where chunk_id is the ID from the database.
         """
-        # Generate query embedding
         query_embedding = self.embedding_model.encode([query])
-        query_embedding = np.array(query_embedding).astype('float32')
-        
-        # Search
-        distances, indices = self.index.search(query_embedding, top_k)
-        
-        # Gather results
+        query_embedding_np = np.array(query_embedding).astype('float32')
+
+        if self.index.ntotal == 0:
+            logger.warning("Search attempted on an empty index.")
+            return []
+
+        distances, chunk_ids_from_faiss = self.index.search(query_embedding_np, top_k)
+
         results = []
-        for dist, idx in zip(distances[0], indices[0]):
-            if idx >= 0:  # Valid result
-                metadata = self.metadata[idx]
-                results.append((idx, float(dist), metadata))
-        
+        for i in range(chunk_ids_from_faiss.shape[1]):
+            chunk_id = int(chunk_ids_from_faiss[0, i])
+            dist = float(distances[0, i])
+            if chunk_id != -1: # FAISS uses -1 for no result or padding
+                results.append((chunk_id, dist))
         return results
     
-    def get_chunks_by_frame(self, frame_number: int) -> List[Dict[str, Any]]:
-        """Get all chunks associated with a frame"""
-        chunk_ids = self.frame_to_chunks.get(frame_number, [])
-        return [self.metadata[chunk_id] for chunk_id in chunk_ids]
-    
-    def get_chunk_by_id(self, chunk_id: int) -> Optional[Dict[str, Any]]:
-        """Get chunk metadata by ID"""
-        if 0 <= chunk_id < len(self.metadata):
-            return self.metadata[chunk_id]
-        return None
-    
-    def save(self, path: str):
+    def save(self, path_prefix: str):
         """
-        Save index to disk
-        
+        Save FAISS index and essential metadata to disk.
         Args:
-            path: Path to save index (without extension)
+            path_prefix: Path prefix to save index and metadata (e.g., "my_index")
+                         Results in "my_index.faiss" and "my_index.indexinfo.json".
         """
-        path = Path(path)
-        
-        # Save FAISS index
-        faiss.write_index(self.index, str(path.with_suffix('.faiss')))
-        
-        # Save metadata and mappings
-        data = {
-            "metadata": self.metadata,
-            "chunk_to_frame": self.chunk_to_frame,
-            "frame_to_chunks": self.frame_to_chunks,
-            "config": self.config
+        path = Path(path_prefix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        faiss_index_file = str(path.with_suffix('.faiss'))
+        faiss.write_index(self.index, faiss_index_file)
+        logger.info(f"Saved FAISS index to {faiss_index_file}")
+
+        index_info = {
+            "config": {
+                "embedding_model": self.config.get("embedding", {}).get("model"),
+                "embedding_dimension": self.dimension,
+                "index_type": self.config.get("index", {}).get("type"),
+                "nlist_for_ivf": self.config.get("index", {}).get("nlist") if self.config.get("index", {}).get("type") == "IVF" else None,
+            },
+            "total_indexed_chunks": self.index.ntotal
         }
         
-        with open(path.with_suffix('.json'), 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        logger.info(f"Saved index to {path}")
+        info_file = str(path.with_suffix('.indexinfo.json'))
+        with open(info_file, 'w') as f:
+            json.dump(index_info, f, indent=2)
+        logger.info(f"Saved index info to {info_file}")
     
-    def load(self, path: str):
+    def load(self, path_prefix: str):
         """
-        Load index from disk
-        
+        Load FAISS index and essential metadata from disk.
         Args:
-            path: Path to load index from (without extension)
+            path_prefix: Path prefix to load index and metadata from.
         """
-        path = Path(path)
+        path = Path(path_prefix)
+        faiss_index_file = str(path.with_suffix('.faiss'))
         
-        # Load FAISS index
-        self.index = faiss.read_index(str(path.with_suffix('.faiss')))
-        
-        # Load metadata and mappings
-        with open(path.with_suffix('.json'), 'r') as f:
-            data = json.load(f)
-        
-        self.metadata = data["metadata"]
-        self.chunk_to_frame = {int(k): v for k, v in data["chunk_to_frame"].items()}
-        self.frame_to_chunks = {int(k): v for k, v in data["frame_to_chunks"].items()}
-        
-        # Update config if available
-        if "config" in data:
-            self.config.update(data["config"])
-        
-        logger.info(f"Loaded index from {path}")
-    
+        if not Path(faiss_index_file).exists():
+            logger.warning(f"FAISS index file not found: {faiss_index_file}. Initializing a new empty index.")
+            self.index = self._create_index()
+        else:
+            self.index = faiss.read_index(faiss_index_file)
+            logger.info(f"Loaded FAISS index from {faiss_index_file}. Total items: {self.index.ntotal}")
+
+        info_file = str(path.with_suffix('.indexinfo.json'))
+        if Path(info_file).exists():
+            with open(info_file, 'r') as f:
+                index_info = json.load(f)
+
+            loaded_config_info = index_info.get("config", {})
+            logger.info(f"Loaded index info: {loaded_config_info}")
+
+            current_embedding_model = self.config.get("embedding", {}).get("model")
+            loaded_embedding_model = loaded_config_info.get("embedding_model")
+            if current_embedding_model != loaded_embedding_model:
+                logger.warning(
+                    f"Mismatch in embedding model between current config ('{current_embedding_model}') "
+                    f"and loaded index info ('{loaded_embedding_model}'). Using current config's model."
+                )
+            # Further checks can be added for dimension, index_type etc. if critical for compatibility
+        else:
+            logger.warning(f"Index info file not found: {info_file}. Index may not be optimally configured if parameters changed since last save.")
+
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics"""
+        actual_index = self.index.index if self.index else None
+        is_trained_status = "N/A (No index or not applicable)"
+        if actual_index:
+            if isinstance(actual_index, (faiss.IndexIVFFlat, faiss.IndexIVFPQ, faiss.IndexIVFScalarQuantizer)): # Add other IVF types if used
+                 is_trained_status = actual_index.is_trained
+            elif isinstance(actual_index, faiss.IndexFlatL2): # Flat indexes don't require training
+                 is_trained_status = "N/A (Flat index)"
+
         return {
-            "total_chunks": len(self.metadata),
-            "total_frames": len(self.frame_to_chunks),
-            "index_type": self.config["index"]["type"],
-            "embedding_model": self.config["embedding"]["model"],
+            "total_indexed_chunks": self.index.ntotal if self.index else 0,
+            "index_type": self.config.get("index", {}).get("type"),
+            "embedding_model": self.config.get("embedding", {}).get("model"),
             "dimension": self.dimension,
-            "avg_chunks_per_frame": np.mean([len(chunks) for chunks in self.frame_to_chunks.values()]) if self.frame_to_chunks else 0
+            "is_trained": is_trained_status,
         }
