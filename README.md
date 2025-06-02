@@ -72,17 +72,63 @@ source venv/bin/activate
 # On Windows:
 venv\Scripts\activate
 
-# Install memvid
+# Install memvid from PyPI (for regular users)
 pip install memvid
 
-# For PDF support (optional):
-pip install PyPDF2
+# For PDF support (optional, if using memvid as a library and need PDF functionality):
+pip install PyPDF2 # Or pip install memvid[pdf] if setup.py extras_require is used by pip install memvid
+
+### Development Setup (for contributors or running examples from source)
+If you have cloned the repository and want to develop `memvid` or run examples from the source code:
+
+```bash
+# (Ensure you are in the root of the cloned memvid project)
+# (And your virtual environment is activated, as shown above)
+
+# Install in development mode (editable install)
+# This installs core dependencies from setup.py's install_requires
+pip install -e .
+
+# To include development tools (like pytest, black):
+pip install -e ".[dev]"
+
+# To include optional PDF support:
+pip install -e ".[pdf]"
+# (This assumes setup.py has extras_require for "pdf" like: extras_require={"pdf": ["PyPDF2"]})
+# Alternatively, install PyPDF2 directly: pip install PyPDF2
+
+# Or, to install all dependencies listed in requirements.txt (for a consistent environment):
+# pip install -r requirements.txt
+```
+*(Note: `extras_require` for "pdf" is already defined in `setup.py`)*
+
+### Running Examples Locally
+The scripts in the `examples/` directory use `sys.path.insert` at the top. This technique allows the Python interpreter to find the local `memvid` module code within the repository *without* the `memvid` library itself being formally installed into the site-packages of the virtual environment in the traditional sense (if you haven't run `pip install .` yet).
+
+However, `sys.path.insert` does **not** install the library's dependencies (like `tqdm`, `sentence-transformers`, `faiss-cpu`, etc.) into your Python environment.
+
+To run the examples successfully, ensure you have first installed `memvid` and its dependencies from the project's root directory within your activated virtual environment:
+```bash
+# From the root of the memvid project, after activating your virtual environment:
+pip install -e .
+# This installs core dependencies. For optional ones like PDF, add them as needed:
+# pip install -e ".[pdf]"
+# pip install python-dotenv # (dotenv is used by some examples for API keys)
+```
+Alternatively, `pip install -r requirements.txt` can be used if it's kept up-to-date with all necessary packages for examples.
+
+After installation, you can then run example scripts like:
+```bash
+python examples/build_memory.py
+python examples/simple_chat.py
 ```
 
 ## 🎯 Quick Start
 
 ### Basic Usage
 ```python
+# Ensure you have installed memvid and its dependencies first
+# (e.g., by running `pip install -e .` from the project root in your venv)
 from memvid import MemvidEncoder, MemvidChat
 from memvid.config import get_default_config # For config if customizing DB path
 import os
