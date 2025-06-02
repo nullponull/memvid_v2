@@ -1,13 +1,13 @@
-qrcode[pil]==8.2
-opencv-python==4.11.0.86
-opencv-contrib-python==4.11.0.86
 sentence-transformers==4.1.0
 numpy==1.26.4
 openai==1.82.0
 tqdm==4.67.1
 faiss-cpu==1.7.4
-Pillow==11.2.1
+# Removed: qrcode, opencv-python, opencv-contrib-python, Pillow
 
-# Optional dependencies for PDF support
+# Optional dependencies for PDF support (can be installed via pip install memvid[pdf])
 PyPDF2==3.0.1
+# python-dotenv is listed in setup.py's install_requires, so it will be installed.
+# If it were truly optional for the library core, it would be in an extras_require section.
+# For consistency with setup.py, it can be listed here or assumed to be pulled by setup.py.
 python-dotenv==1.1.0
