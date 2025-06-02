@@ -25,7 +25,7 @@ except ImportError:
 class MemvidChat:
     """Manages conversations with context retrieval and LLM interface"""
     
-    def __init__(self, video_file: str, index_file: str,
+    def __init__(self, index_file_path_prefix: str,
                  llm_api_key: Optional[str] = None,
                  llm_model: Optional[str] = None,
                  config: Optional[Dict[str, Any]] = None):
@@ -33,14 +33,15 @@ class MemvidChat:
         Initialize MemvidChat
         
         Args:
-            video_file: Path to QR code video
-            index_file: Path to index file
+            index_file_path_prefix: Path prefix for the index files (e.g., 'my_memory' for 'my_memory.faiss' and 'my_memory.indexinfo.json').
             llm_api_key: API key for LLM (or set via environment)
             llm_model: LLM model to use
             config: Optional configuration
         """
         self.config = config or get_default_config()
-        self.retriever = MemvidRetriever(video_file, index_file, self.config)
+        # Initialize retriever with index_file_path_prefix and config
+        # The DatabaseManager path will be derived from self.config within MemvidRetriever
+        self.retriever = MemvidRetriever(index_file_path_prefix=index_file_path_prefix, config=self.config)
         
         # Initialize LLM
         self.llm_model = llm_model or self.config["llm"]["model"]

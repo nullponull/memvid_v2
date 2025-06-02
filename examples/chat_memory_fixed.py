@@ -19,44 +19,53 @@ def print_search_results(results):
     """Pretty print search results"""
     print("\nRelevant context found:")
     print("-" * 50)
-    for i, result in enumerate(results[:3]):
-        print(f"\n[{i+1}] Score: {result['score']:.3f}")
-        print(f"Text: {result['text'][:150]}...")
-        print(f"Frame: {result['frame']}")
+    for i, result in enumerate(results[:3]): # Show top 3 results
+        print(f"\n[{i+1}] Score: {result.get('score', 0.0):.3f}")
+        print(f"Text: {result.get('text', '')[:150]}...")
+        print(f"Chunk ID: {result.get('chunk_id', 'N/A')}") # Changed from Frame
+        custom_meta = result.get('metadata', {})
+        if custom_meta:
+            print(f"Metadata: {custom_meta}")
 
 
 def main():
     print("Memvid Example: Interactive Chat with Memory")
     print("=" * 50)
     
+    # Define path prefix for index files
+    index_file_path_prefix = "output/memory_index"
+
     # Check if memory files exist
-    video_file = "output/memory.mp4"
-    index_file = "output/memory_index.json"
+    faiss_file_expected = f"{index_file_path_prefix}.faiss"
+    info_file_expected = f"{index_file_path_prefix}.indexinfo.json"
     
-    if not os.path.exists(video_file) or not os.path.exists(index_file):
-        print("\nError: Memory files not found!")
+    if not os.path.exists(faiss_file_expected) or not os.path.exists(info_file_expected):
+        print("\nError: Memory files not found (expected .faiss and .indexinfo.json).")
+        print(f"Searched for: {faiss_file_expected} and {info_file_expected}")
         print("Please run 'python examples/build_memory.py' first to create the memory.")
         return
     
     # Initialize chat
-    print(f"\nLoading memory from: {video_file}")
+    print(f"\nLoading memory from index prefix: {index_file_path_prefix}")
     
     # You can set OPENAI_API_KEY environment variable or pass it here
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        print("\nNote: No OpenAI API key found. Chat will work in context-only mode.")
-        print("Set OPENAI_API_KEY environment variable to enable full chat capabilities.")
+    api_key = os.getenv("OPENAI_API_KEY", "") # Default to empty string if not found
+    if not api_key: # Check if api_key is an empty string or None
+        print("\nNote: No OpenAI API key found (checked OPENAI_API_KEY env var). Chat will work in context-only mode.")
+        # Message in MemvidChat itself will also indicate this.
     
-    chat = MemvidChat(video_file, index_file, llm_api_key=api_key)
+    chat = MemvidChat(index_file_path_prefix, llm_api_key=api_key)
     chat.start_session()
     
     # Get stats
     stats = chat.get_stats()
+    ret_stats = stats.get('retriever_stats', {})
+    idx_stats = ret_stats.get('index_stats', {})
     print(f"\nMemory loaded successfully!")
-    print(f"  Total chunks: {stats['retriever_stats']['index_stats']['total_chunks']}")
-    print(f"  LLM available: {stats['llm_available']}")
-    if stats['llm_available']:
-        print(f"  LLM model: {stats['llm_model']}")
+    print(f"  Total indexed chunks: {idx_stats.get('total_indexed_chunks', 'N/A')}") # Updated stat key
+    print(f"  LLM available: {stats.get('llm_available', False)}")
+    if stats.get('llm_available'):
+        print(f"  LLM model: {stats.get('llm_model', 'N/A')}")
     
     print("\nInstructions:")
     print("- Type your questions to search the memory")
@@ -81,10 +90,25 @@ def main():
                 
             elif user_input.lower() == 'stats':
                 stats = chat.get_stats()
+                ret_stats = stats.get('retriever_stats', {})
+                idx_s = ret_stats.get('index_stats', {}) # To match previous structure for iteration
+                cache_s = ret_stats.get('cache_stats', {})
+
                 print("\nSystem Statistics:")
-                print(f"  Messages: {stats['message_count']}")
-                print(f"  Cache size: {stats['retriever_stats']['cache_size']}")
-                print(f"  Video frames: {stats['retriever_stats']['total_frames']}")
+                print(f"  Session Messages: {stats.get('message_count', 'N/A')}")
+                print(f"  LLM Model: {stats.get('llm_model', 'N/A')} ({'Available' if stats.get('llm_available') else 'Not Available'})")
+                print(f"  Retriever:")
+                print(f"    Index Path Prefix: {ret_stats.get('index_file_prefix', 'N/A')}")
+                print(f"    Database path: {ret_stats.get('db_path', 'N/A')}")
+                if cache_s and cache_s.get('info') != 'Cache info not available for _get_db_chunk_details.': # Check cache_s itself
+                     print(f"    Cache: {cache_s.get('currsize',0)}/{cache_s.get('maxsize',0)} (Hits:{cache_s.get('hits',0)}, Misses:{cache_s.get('misses',0)})")
+                else:
+                    # Use the specific message from retriever if available, otherwise generic
+                    cache_info_msg = cache_s.get('info') if cache_s else 'Info not available or N/A'
+                    print(f"    Cache: {cache_info_msg}")
+                print(f"    Index Stats:")
+                for k, v in idx_s.items():
+                    print(f"      {k}: {v}")
                 continue
                 
             elif user_input.lower() == 'export':
