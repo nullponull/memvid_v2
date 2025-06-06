@@ -57,9 +57,9 @@ def sidebar_config():
         # Memory file selection
         st.subheader("Load Existing Memory")
         
-        # Default paths
-        default_video = f"output/memory.{get_video_file_type()}"
-        default_index = "output/memory_index.json"
+        # Default paths - use session state if available
+        default_video = st.session_state.video_file or f"output/memory.{get_video_file_type()}"
+        default_index = st.session_state.index_file or "output/memory_index.json"
         
         video_path = st.text_input(
             "Video Memory File Path",
@@ -201,6 +201,10 @@ def create_memory_from_upload(uploaded_file):
         st.success(f"✅ Memory created successfully!")
         st.info(f"Video: {video_path}")
         st.info(f"Index: {index_path}")
+        
+        # Update session state with new file paths
+        st.session_state.video_file = str(video_path)
+        st.session_state.index_file = str(index_path)
         
         # Auto-load the new memory
         if st.button("Load New Memory"):
