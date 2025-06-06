@@ -57,48 +57,61 @@ def sidebar_config():
         st.title("🧠 Memory Configuration")
         
         # Memory file selection
-        st.subheader("Load Existing Memory")
+        st.subheader("📂 Select Memory Files")
+        st.write("Browse and select your existing memory files or create a new memory below.")
         
         # Show special message if memory was just created
         if st.session_state.memory_just_created:
-            st.success("🎉 Memory created! File paths have been updated below.")
+            st.success("🎉 Memory created! Files are now selected.")
             st.session_state.memory_just_created = False  # Reset flag
         
-        # Default paths - use session state if available
-        default_video = st.session_state.video_file or f"output/memory.{get_video_file_type()}"
-        default_index = st.session_state.index_file or "output/memory_index.json"
-        
-        video_path = st.text_input(
-            "Video Memory File Path",
-            value=default_video,
-            key="video_path_input",
-            help="Path to your QR code video memory file"
+        # File browsers for memory files
+        video_file = st.file_uploader(
+            "Select Video Memory File",
+            type=[get_video_file_type()],
+            help="Choose your QR code video memory file"
         )
         
-        index_path = st.text_input(
-            "Index File Path", 
-            value=default_index,
-            key="index_path_input",
-            help="Path to your memory index JSON file"
+        index_file = st.file_uploader(
+            "Select Index File",
+            type=["json"],
+            help="Choose your memory index JSON file"
         )
+        
+        # Use uploaded files or fall back to session state paths
+        if video_file:
+            video_path = video_file.name
+            # Save uploaded file temporarily
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{get_video_file_type()}") as tmp_video:
+                tmp_video.write(video_file.getvalue())
+                video_path = tmp_video.name
+        else:
+            video_path = st.session_state.video_file
+            
+        if index_file:
+            index_path = index_file.name
+            # Save uploaded file temporarily
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp_index:
+                tmp_index.write(index_file.getvalue())
+                index_path = tmp_index.name
+        else:
+            index_path = st.session_state.index_file
         
         # Check if files exist
         video_exists = os.path.exists(video_path) if video_path else False
         index_exists = os.path.exists(index_path) if index_path else False
         
-        if video_exists and index_exists:
-            st.success("✅ Memory files found!")
+        # Display file status and load button
+        both_files_available = (video_file and index_file) or (video_exists and index_exists)
+        
+        if both_files_available:
+            st.success("✅ Memory files ready!")
             
             # Check if API key is provided for the button state
             current_api_key = getattr(st.session_state, 'api_key', None)
             has_api_key = current_api_key and current_api_key.strip()
-            
-            # Debug info
-            st.write(f"Debug: API key present: {bool(has_api_key)}")
-            st.write(f"Debug: API key length: {len(current_api_key) if current_api_key else 0}")
-            st.write(f"Debug: Session state API key: {bool(getattr(st.session_state, 'api_key', None))}")
-            st.write(f"Debug: Video exists: {video_exists}")
-            st.write(f"Debug: Index exists: {index_exists}")
             
             if not has_api_key:
                 st.warning("⚠️ Please enter an API key in LLM Settings to load memory")
@@ -110,18 +123,15 @@ def sidebar_config():
                 with st.spinner("Loading memory..."):
                     load_memory(video_path, index_path)
         else:
-            if video_path and index_path:
-                missing = []
-                if not video_exists:
-                    missing.append("video file")
-                if not index_exists:
-                    missing.append("index file")
-                st.warning(f"❌ Missing: {', '.join(missing)}")
+            if not video_file and not st.session_state.video_file:
+                st.info("📁 Please select a video memory file")
+            if not index_file and not st.session_state.index_file:
+                st.info("📄 Please select an index JSON file")
         
         st.divider()
         
         # Create new memory
-        st.subheader("Create New Memory")
+        st.subheader("📝 Create New Memory")
         
         # File upload for creating memory
         uploaded_file = st.file_uploader(
