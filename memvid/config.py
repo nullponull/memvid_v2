@@ -78,7 +78,7 @@ INDEX_TYPE = "Flat"  # Can be "IVF" for larger datasets, otherwise use Flat
 NLIST = 100  # Number of clusters for IVF index
 
 # LLM settings
-DEFAULT_LLM_PROVIDER = "google"  # google, openai, anthropic
+DEFAULT_LLM_PROVIDER = "openai"  # google, openai, anthropic
 DEFAULT_LLM_MODELS = {
     "google": "gemini-2.0-flash-exp",
     "openai": "gpt-4.1",

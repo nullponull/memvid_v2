@@ -79,7 +79,18 @@ def sidebar_config():
         
         if video_exists and index_exists:
             st.success("✅ Memory files found!")
-            if st.button("Load Memory"):
+            
+            # Check if API key is provided for the button state
+            current_api_key = getattr(st.session_state, 'api_key', None)
+            has_api_key = current_api_key and current_api_key.strip()
+            
+            if not has_api_key:
+                st.warning("⚠️ Please enter an API key in LLM Settings to load memory")
+            
+            if st.button("🧠 Load Memory", 
+                        disabled=not has_api_key, 
+                        help="Load the memory files and initialize chat" if has_api_key else "Enter an API key first",
+                        use_container_width=True):
                 load_memory(video_path, index_path)
         else:
             if video_path and index_path:
@@ -113,7 +124,7 @@ def sidebar_config():
         
         llm_provider = st.selectbox(
             "LLM Provider",
-            ["google", "openai", "anthropic"],
+            ["openai", "google", "anthropic"],
             index=0,
             help="Choose your preferred language model provider"
         )
@@ -140,7 +151,7 @@ def load_memory(video_path: str, index_path: str):
     """Load memory files and initialize chat"""
     try:
         # Get LLM settings from session state
-        llm_provider = getattr(st.session_state, 'llm_provider', 'google')
+        llm_provider = getattr(st.session_state, 'llm_provider', 'openai')
         api_key = getattr(st.session_state, 'api_key', None)
         
         # Initialize chat instance
@@ -207,7 +218,16 @@ def create_memory_from_upload(uploaded_file):
         st.session_state.index_file = str(index_path)
         
         # Auto-load the new memory
-        if st.button("Load New Memory"):
+        current_api_key = getattr(st.session_state, 'api_key', None)
+        has_api_key = current_api_key and current_api_key.strip()
+        
+        if not has_api_key:
+            st.warning("⚠️ Please enter an API key in LLM Settings to load memory")
+        
+        if st.button("🧠 Load New Memory", 
+                    disabled=not has_api_key,
+                    help="Load the newly created memory and start chatting" if has_api_key else "Enter an API key first",
+                    use_container_width=True):
             load_memory(str(video_path), str(index_path))
             
     except Exception as e:
