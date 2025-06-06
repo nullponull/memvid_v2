@@ -23,7 +23,9 @@ https://github.com/user-attachments/assets/ec550e93-e9c4-459f-a8a1-46e122b5851e
 - 📚 **PDF Support**: Direct import and indexing of PDF documents
 - 🚀 **Fast Retrieval**: Sub-second search across massive datasets
 - 💾 **Efficient Storage**: 10x compression compared to traditional databases
-- 🔌 **Pluggable LLMs**: Works with OpenAI, Anthropic, or local models
+- 🔌 **Pluggable LLMs**: Default OpenAI GPT-4.1, also supports Anthropic Claude, Google Gemini
+- 🖥️ **Web Interface**: User-friendly Streamlit interface for easy memory management
+- ☁️ **Cloud Ready**: Google Colab notebook for instant cloud-based usage
 - 🌐 **Offline-First**: No internet required after video generation
 - 🔧 **Simple API**: Get started with just 3 lines of code
 
@@ -63,6 +65,14 @@ pip install memvid
 pip install memvid PyPDF2
 ```
 
+### For Streamlit Web Interface
+```bash
+pip install memvid streamlit
+```
+
+### Cloud Usage - Google Colab
+Try Memvid instantly in your browser with our Colab notebook: [Memvid_colab.ipynb](Memvid_colab.ipynb)
+
 ### Recommended Setup (Virtual Environment)
 ```bash
 # Create a new project directory
@@ -97,8 +107,8 @@ encoder = MemvidEncoder()
 encoder.add_chunks(chunks)
 encoder.build_video("memory.mp4", "memory_index.json")
 
-# Chat with your memory
-chat = MemvidChat("memory.mp4", "memory_index.json")
+# Chat with your memory (defaults to OpenAI GPT-4.1)
+chat = MemvidChat("memory.mp4", "memory_index.json", llm_api_key="your-openai-key")
 chat.start_session()
 response = chat.chat("What do you know about historical events?")
 print(response)
@@ -143,14 +153,20 @@ context = retriever.get_context("explain neural networks", max_tokens=2000)
 print(context)
 ```
 
-### Interactive Chat Interface
-```python
-from memvid import MemvidInteractive
-
-# Launch interactive chat UI
-interactive = MemvidInteractive("knowledge_base.mp4", "knowledge_index.json")
-interactive.run()  # Opens web interface at http://localhost:7860
+### Streamlit Web Interface
+```bash
+# Launch the web interface
+streamlit run streamlit_chat.py
 ```
+
+**Features:**
+- 📁 File browser for selecting memory files
+- 📝 Drag-and-drop document upload for memory creation
+- 🔑 API key management for OpenAI, Google Gemini, or Anthropic Claude
+- 💬 Interactive chat with memory context
+- 📊 Memory statistics and management
+
+Access at: http://localhost:8501
 
 ### Testing with file_chat.py
 The `examples/file_chat.py` script provides a comprehensive way to test Memvid with your own documents:
@@ -256,10 +272,15 @@ pip install PyPDF2
 
 **LLM API Key Issues**
 ```bash
-# Set your API key (get one at https://platform.openai.com)
-export GOOGLE_API_KEY="AIzaSyB1-..."  # macOS/Linux
-# Or on Windows:
-set GOOGLE_API_KEY=AIzaSyB1-...
+# Set your API key for OpenAI (default)
+export OPENAI_API_KEY="sk-..."  # macOS/Linux
+# Or for Google Gemini:
+export GOOGLE_API_KEY="AIzaSyB1-..."
+# Or for Anthropic Claude:
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# On Windows:
+set OPENAI_API_KEY=sk-...
 ```
 
 **Large PDF Processing**
