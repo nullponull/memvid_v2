@@ -17,7 +17,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memvid.chat import MemvidChat
 from memvid.encoder import MemvidEncoder
-from memvid.config import get_default_config, VIDEO_FILE_TYPE
+from memvid.config import get_default_config, get_codec_parameters
+
+def get_video_file_type(codec=None):
+    """Get the video file extension for the given codec"""
+    if codec is None:
+        config = get_default_config()
+        codec = config["codec"]
+    
+    codec_params = get_codec_parameters(codec)
+    return codec_params["video_file_type"]
 
 # Page configuration
 st.set_page_config(
@@ -49,7 +58,7 @@ def sidebar_config():
         st.subheader("Load Existing Memory")
         
         # Default paths
-        default_video = f"output/memory.{VIDEO_FILE_TYPE}"
+        default_video = f"output/memory.{get_video_file_type()}"
         default_index = "output/memory_index.json"
         
         video_path = st.text_input(
@@ -172,7 +181,7 @@ def create_memory_from_upload(uploaded_file):
         
         # Generate output filenames with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        video_filename = f"memory_{timestamp}.{VIDEO_FILE_TYPE}"
+        video_filename = f"memory_{timestamp}.{get_video_file_type()}"
         index_filename = f"memory_index_{timestamp}.json"
         
         video_path = output_dir / video_filename
