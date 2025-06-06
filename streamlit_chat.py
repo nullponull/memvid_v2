@@ -95,6 +95,8 @@ def sidebar_config():
             
             # Debug info
             st.write(f"Debug: API key present: {bool(has_api_key)}")
+            st.write(f"Debug: API key length: {len(current_api_key) if current_api_key else 0}")
+            st.write(f"Debug: Session state API key: {bool(getattr(st.session_state, 'api_key', None))}")
             st.write(f"Debug: Video exists: {video_exists}")
             st.write(f"Debug: Index exists: {index_exists}")
             
@@ -144,8 +146,12 @@ def sidebar_config():
             help="Choose your preferred language model provider"
         )
         
+        # Get current API key from session state or empty string
+        current_api_key = getattr(st.session_state, 'api_key', '')
+        
         api_key = st.text_input(
             "API Key",
+            value=current_api_key,
             type="password",
             help="Enter your API key for the selected provider"
         )
