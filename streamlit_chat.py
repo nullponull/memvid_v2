@@ -187,17 +187,13 @@ def create_memory_from_upload(uploaded_file):
         video_path = output_dir / video_filename
         index_path = output_dir / index_filename
         
-        # Initialize encoder
+        # Initialize encoder from file
         config = get_default_config()
-        encoder = MemvidEncoder(config)
         
         with st.spinner("Creating QR code video memory... This may take a few minutes."):
-            # Build memory
-            encoder.build_memory_from_file(
-                file_path=tmp_path,
-                video_output_path=str(video_path),
-                index_output_path=str(index_path)
-            )
+            # Create encoder from file and build video
+            encoder = MemvidEncoder.from_file(tmp_path, config=config)
+            build_stats = encoder.build_video(str(video_path), str(index_path), show_progress=True)
         
         # Clean up temporary file
         os.unlink(tmp_path)
