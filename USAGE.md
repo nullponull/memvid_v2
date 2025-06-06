@@ -20,13 +20,15 @@ Memvid is a Python library that enables efficient storage and retrieval of text 
 - **Video creation** for compact storage
 - **Vector search** for fast retrieval
 - **Conversational AI** interface with context-aware memory
+- **Web-based Streamlit** interface for easy interaction
+- **Google Colab** notebook for cloud-based usage
 
 ### Key Benefits
 - Store millions of text chunks in a single video file
 - Fast semantic search (< 2 seconds for 1M chunks)
 - No database required - just MP4 + index files
 - Portable and shareable knowledge bases
-- Works with any LLM (OpenAI, Claude, local models)
+- Works with any LLM (default OpenAI GPT-4.1, Claude, Gemini, local models)
 
 ## Installation
 
@@ -75,6 +77,14 @@ pip install -e .
 ```bash
 pip install memvid
 ```
+
+**Option 3: Streamlit Web Interface**
+```bash
+pip install memvid streamlit
+```
+
+**Option 4: Google Colab**
+Try Memvid instantly in your browser with our Colab notebook: [Memvid_colab.ipynb](Memvid_colab.ipynb)
 
 ### Verify Installation
 ```python
@@ -127,14 +137,30 @@ for chunk in results:
 ```python
 from memvid import MemvidChat
 
-# Initialize chat (set OPENAI_API_KEY environment variable)
-chat = MemvidChat("output/knowledge.mp4", "output/knowledge_index.json")
+# Initialize chat (defaults to OpenAI GPT-4.1)
+chat = MemvidChat("output/knowledge.mp4", "output/knowledge_index.json", llm_api_key="your-openai-key")
 chat.start_session()
 
 # Have a conversation
 response = chat.chat("What do you know about quantum computers?")
 print(response)
 ```
+
+### 4. Streamlit Web Interface
+
+```bash
+# Launch the web interface
+streamlit run streamlit_chat.py
+```
+
+**Features:**
+- 📁 File browser for selecting memory files
+- 📝 Drag-and-drop document upload for memory creation
+- 🔑 API key management for OpenAI, Google Gemini, or Anthropic Claude
+- 💬 Interactive chat with memory context
+- 📊 Memory statistics and management
+
+Access at: http://localhost:8501
 
 ## Architecture
 
@@ -154,12 +180,14 @@ print(response)
 
 ```
 memvid/
-├── encoder.py      # Text → QR Video conversion
-├── retriever.py    # Video → Text retrieval
-├── chat.py         # Conversational interface
-├── index.py        # Vector indexing & search
-├── utils.py        # QR & video utilities
-└── config.py       # Configuration management
+├── encoder.py         # Text → QR Video conversion
+├── retriever.py       # Video → Text retrieval
+├── chat.py            # Conversational interface
+├── index.py           # Vector indexing & search
+├── utils.py           # QR & video utilities
+├── config.py          # Configuration management
+├── streamlit_chat.py  # Web interface
+└── Memvid_colab.ipynb # Google Colab notebook
 ```
 
 ## File Outputs Explained
@@ -332,7 +360,8 @@ os.environ['OPENAI_API_KEY'] = 'your-key-here'
 chat = MemvidChat(
     "video.mp4",
     "index.json",
-    llm_model="gpt-3.5-turbo",  # or gpt-4, claude-3, etc.
+    llm_model="gpt-4.1",        # Default OpenAI GPT-4.1
+    llm_provider="openai",      # or "google", "anthropic"
     config={
         "chat": {
             "context_chunks": 5,      # Chunks per query
