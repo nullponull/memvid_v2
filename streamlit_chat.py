@@ -93,6 +93,11 @@ def sidebar_config():
             current_api_key = getattr(st.session_state, 'api_key', None)
             has_api_key = current_api_key and current_api_key.strip()
             
+            # Debug info
+            st.write(f"Debug: API key present: {bool(has_api_key)}")
+            st.write(f"Debug: Video exists: {video_exists}")
+            st.write(f"Debug: Index exists: {index_exists}")
+            
             if not has_api_key:
                 st.warning("⚠️ Please enter an API key in LLM Settings to load memory")
             
@@ -100,7 +105,8 @@ def sidebar_config():
                         disabled=not has_api_key, 
                         help="Load the memory files and initialize chat" if has_api_key else "Enter an API key first",
                         use_container_width=True):
-                load_memory(video_path, index_path)
+                with st.spinner("Loading memory..."):
+                    load_memory(video_path, index_path)
         else:
             if video_path and index_path:
                 missing = []
@@ -163,6 +169,10 @@ def load_memory(video_path: str, index_path: str):
         llm_provider = getattr(st.session_state, 'llm_provider', 'openai')
         api_key = getattr(st.session_state, 'api_key', None)
         
+        st.info(f"Loading memory with {llm_provider}...")
+        st.info(f"Video: {video_path}")
+        st.info(f"Index: {index_path}")
+        
         # Initialize chat instance
         chat_instance = MemvidChat(
             video_file=video_path,
@@ -185,7 +195,10 @@ def load_memory(video_path: str, index_path: str):
         st.rerun()
         
     except Exception as e:
+        import traceback
         st.error(f"❌ Error loading memory: {str(e)}")
+        st.error(f"Full error: {traceback.format_exc()}")
+        st.error("Please check your API key and file paths.")
 
 def create_memory_from_upload(uploaded_file):
     """Create a new memory from uploaded file"""
