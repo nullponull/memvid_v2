@@ -48,6 +48,8 @@ def initialize_session_state():
         st.session_state.video_file = None
     if 'index_file' not in st.session_state:
         st.session_state.index_file = None
+    if 'memory_just_created' not in st.session_state:
+        st.session_state.memory_just_created = False
 
 def sidebar_config():
     """Sidebar configuration for memory management and settings"""
@@ -57,6 +59,11 @@ def sidebar_config():
         # Memory file selection
         st.subheader("Load Existing Memory")
         
+        # Show special message if memory was just created
+        if st.session_state.memory_just_created:
+            st.success("🎉 Memory created! File paths have been updated below.")
+            st.session_state.memory_just_created = False  # Reset flag
+        
         # Default paths - use session state if available
         default_video = st.session_state.video_file or f"output/memory.{get_video_file_type()}"
         default_index = st.session_state.index_file or "output/memory_index.json"
@@ -64,12 +71,14 @@ def sidebar_config():
         video_path = st.text_input(
             "Video Memory File Path",
             value=default_video,
+            key="video_path_input",
             help="Path to your QR code video memory file"
         )
         
         index_path = st.text_input(
             "Index File Path", 
             value=default_index,
+            key="index_path_input",
             help="Path to your memory index JSON file"
         )
         
@@ -216,6 +225,7 @@ def create_memory_from_upload(uploaded_file):
         # Update session state with new file paths
         st.session_state.video_file = str(video_path)
         st.session_state.index_file = str(index_path)
+        st.session_state.memory_just_created = True
         
         # Auto-load the new memory
         current_api_key = getattr(st.session_state, 'api_key', None)
@@ -229,6 +239,9 @@ def create_memory_from_upload(uploaded_file):
                     help="Load the newly created memory and start chatting" if has_api_key else "Enter an API key first",
                     use_container_width=True):
             load_memory(str(video_path), str(index_path))
+        
+        # Trigger a rerun to update the text inputs with new paths
+        st.rerun()
             
     except Exception as e:
         st.error(f"❌ Error creating memory: {str(e)}")
