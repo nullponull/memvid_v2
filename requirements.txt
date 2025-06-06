@@ -19,3 +19,6 @@ ebooklib
 openai==1.82.0
 google-generativeai==0.8.5
 anthropic~=0.52.1
+
+# Streamlit for web interface
+streamlit>=1.28.0

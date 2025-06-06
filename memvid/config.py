@@ -81,7 +81,7 @@ NLIST = 100  # Number of clusters for IVF index
 DEFAULT_LLM_PROVIDER = "google"  # google, openai, anthropic
 DEFAULT_LLM_MODELS = {
     "google": "gemini-2.0-flash-exp",
-    "openai": "gpt-4o",
+    "openai": "gpt-4.1",
     "anthropic": "claude-3-5-sonnet-20241022"
 }
 

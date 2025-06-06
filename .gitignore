@@ -17,7 +17,7 @@ memvid.egg-info/
 
 # Ignore Python cache files
 __pycache__/
-*.pyc
+__pycache__/*.pyc
 
 # Ignore build artifacts from previous versions
 memvid/__pycache__/
