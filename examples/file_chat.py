@@ -466,9 +466,9 @@ def main():
     )
     parser.add_argument(
         '--pdf-processor',
-        choices=['pypdf2', 'pymupdf', 'ocr_tesseract', 'ocr_easyocr', 'ocr_handwritten'],
+        choices=['pypdf2', 'pymupdf', 'ocr_tesseract', 'ocr_easyocr'],
         default='pypdf2',
-        help='PDF processing method: pypdf2 (digital PDFs), pymupdf (better extraction), ocr_tesseract (scanned PDFs), ocr_easyocr (handwritten text), ocr_handwritten (specialized handwriting)'
+        help='PDF processing method: pypdf2 (digital PDFs), pymupdf (better extraction), ocr_tesseract (scanned PDFs), ocr_easyocr (handwritten text)'
     )
 
     # File processing options

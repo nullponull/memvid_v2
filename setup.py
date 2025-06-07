@@ -57,7 +57,6 @@ setup(
             "pymupdf>=1.23.0",
             "pytesseract>=0.3.10",
             "easyocr>=1.7.0",
-            "opencv-python>=4.5.0",
         ],
         "epub": [
             "beautifulsoup4>=4.0.0",

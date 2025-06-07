@@ -70,8 +70,7 @@ def check_dependencies():
         'pypdf2': False,
         'pymupdf': False,
         'ocr_tesseract': False,
-        'ocr_easyocr': False,
-        'ocr_handwritten': False
+        'ocr_easyocr': False
     }
     
     print("🔍 Checking PDF processor dependencies...")
@@ -112,19 +111,6 @@ def check_dependencies():
         print("✅ EasyOCR: Available")
     except ImportError:
         print("❌ EasyOCR: Missing dependencies (pip install pymupdf easyocr numpy Pillow)")
-    
-    # Check Specialized Handwritten OCR
-    try:
-        import easyocr
-        import pytesseract
-        import fitz
-        import cv2
-        import numpy as np
-        from PIL import Image
-        processors['ocr_handwritten'] = True
-        print("✅ Specialized Handwritten OCR: Available")
-    except ImportError:
-        print("❌ Specialized Handwritten OCR: Missing dependencies (pip install pymupdf easyocr pytesseract opencv-python numpy Pillow)")
     
     return processors
 
@@ -215,7 +201,7 @@ Examples:
     parser.add_argument(
         '--processors', 
         nargs='+',
-        choices=['pypdf2', 'pymupdf', 'ocr_tesseract', 'ocr_easyocr', 'ocr_handwritten'],
+        choices=['pypdf2', 'pymupdf', 'ocr_tesseract', 'ocr_easyocr'],
         help='Specific processors to test (default: all available)'
     )
     

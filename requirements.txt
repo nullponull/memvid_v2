@@ -12,7 +12,6 @@ PyPDF2==3.0.1
 pymupdf>=1.23.0
 pytesseract>=0.3.10
 easyocr>=1.7.0
-opencv-python>=4.5.0
 python-dotenv==1.1.0
 
 # Optional imports for epub
