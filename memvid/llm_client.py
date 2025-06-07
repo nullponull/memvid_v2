@@ -342,11 +342,11 @@ class QWen3Provider(LLMProvider):
             return None
 
     def chat_stream(self, messages: List[Dict[str, str]], **kwargs) -> Iterator[str]:
-        """Stream chat response from OpenAI"""
+        """Stream chat response from QWen3"""
         return self.chat(messages, stream=True, **kwargs)
 
     def _convert_messages_to_qwen3(self, messages: List[Dict[str, str]]) -> List[Message]:
-        """Convert OpenAI format to Google format using your working patterns"""
+        """Convert message format to Dashscope messag  format """
         qwen3_messages = []
 
         for message in messages:
@@ -359,8 +359,8 @@ class QWen3Provider(LLMProvider):
     def _stream_response(self, response) -> Iterator[str]:
         """Process streaming response from Qwen3"""
         for chunk in response:
-            if chunk.choices[0].message.content is not None:
-                yield chunk.choices[0].message.content
+            if response.output.text is not None:
+                yield response.output.text
 
 class LLMClient:
     """Unified LLM client that supports multiple providers"""
