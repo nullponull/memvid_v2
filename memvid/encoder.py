@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any
 from tqdm import tqdm
 import cv2
 import numpy as np
+from PIL import Image, ImageEnhance, ImageFilter
 
 from .utils import encode_to_qr, qr_to_frame, chunk_text
 from .index import IndexManager
@@ -72,6 +73,7 @@ class MemvidEncoder:
                 - "pymupdf": Enhanced PDF text extraction (better than PyPDF2)
                 - "ocr_tesseract": OCR using Tesseract (for scanned/image PDFs)
                 - "ocr_easyocr": OCR using EasyOCR (better for handwritten text)
+                - "ocr_handwritten": Specialized handwritten OCR
         """
         if not Path(pdf_path).exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
@@ -86,8 +88,10 @@ class MemvidEncoder:
             text = self._extract_pdf_ocr_tesseract(pdf_path)
         elif pdf_processor == "ocr_easyocr":
             text = self._extract_pdf_ocr_easyocr(pdf_path)
+        elif pdf_processor == "ocr_handwritten":
+            text = self._extract_pdf_ocr_handwritten(pdf_path)
         else:
-            raise ValueError(f"Unsupported pdf_processor: {pdf_processor}. Options: pypdf2, pymupdf, ocr_tesseract, ocr_easyocr")
+            raise ValueError(f"Unsupported pdf_processor: {pdf_processor}. Options: pypdf2, pymupdf, ocr_tesseract, ocr_easyocr, ocr_handwritten")
 
         if text.strip():
             self.add_text(text, chunk_size, overlap)
@@ -137,83 +141,386 @@ class MemvidEncoder:
         return text
 
     def _extract_pdf_ocr_tesseract(self, pdf_path: str) -> str:
-        """Extract text using Tesseract OCR (for scanned PDFs)"""
+        """Extract text using Tesseract OCR (enhanced for scanned and handwritten PDFs)"""
         try:
             import fitz  # PyMuPDF for PDF to image conversion
             import pytesseract
-            from PIL import Image
+            from PIL import Image, ImageEnhance, ImageFilter
+            import cv2
             import io
         except ImportError:
-            raise ImportError("PyMuPDF, pytesseract, and Pillow are required for ocr_tesseract processor. Install with: pip install pymupdf pytesseract Pillow")
+            raise ImportError("PyMuPDF, pytesseract, opencv-python, and Pillow are required for ocr_tesseract processor. Install with: pip install pymupdf pytesseract opencv-python Pillow")
 
         text = ""
         doc = fitz.open(pdf_path)
         
-        logger.info(f"Processing {len(doc)} pages with Tesseract OCR")
+        logger.info(f"Processing {len(doc)} pages with Tesseract OCR (enhanced)")
         
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
             
-            # Convert page to image
-            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better OCR accuracy
-            pix = page.get_pixmap(matrix=mat)
+            # Convert page to high-resolution image
+            mat = fitz.Matrix(3.0, 3.0)  # 3x zoom for better OCR accuracy
+            pix = page.get_pixmap(matrix=mat, alpha=False)
             img_data = pix.tobytes("png")
             
-            # OCR the image
+            # Load and preprocess image
             image = Image.open(io.BytesIO(img_data))
-            page_text = pytesseract.image_to_string(image, config='--psm 6')
-            text += page_text + "\n\n"
+            preprocessed_image = self._preprocess_handwritten_image(image)
             
-            logger.debug(f"Processed page {page_num + 1}/{len(doc)} with OCR")
+            # Try multiple Tesseract configurations for better handwriting support
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',  # Alphanumeric only
+                '--psm 6',  # Standard configuration
+                '--psm 4',  # Single column text
+                '--psm 3',  # Auto page segmentation
+            ]
+            
+            best_text = ""
+            max_confidence = 0
+            
+            for config in configs:
+                try:
+                    # Get OCR result with confidence
+                    ocr_data = pytesseract.image_to_data(preprocessed_image, config=config, output_type=pytesseract.Output.DICT)
+                    
+                    # Calculate average confidence
+                    confidences = [int(conf) for conf in ocr_data['conf'] if int(conf) > 0]
+                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    
+                    # Extract text from high-confidence words
+                    page_text = ""
+                    for i, word in enumerate(ocr_data['text']):
+                        confidence = int(ocr_data['conf'][i])
+                        if confidence > 30 and word.strip():  # Lower threshold for handwriting
+                            page_text += word + " "
+                    
+                    # Use the configuration that gives best average confidence
+                    if avg_confidence > max_confidence and page_text.strip():
+                        max_confidence = avg_confidence
+                        best_text = page_text.strip()
+                        
+                except Exception as e:
+                    logger.debug(f"Tesseract config '{config}' failed: {e}")
+                    continue
+            
+            if best_text:
+                cleaned_text = self._clean_handwritten_text(best_text)
+                text += cleaned_text + "\n\n"
+            
+            logger.debug(f"Processed page {page_num + 1}/{len(doc)} with Tesseract (confidence: {max_confidence:.1f})")
         
         doc.close()
         return text
 
     def _extract_pdf_ocr_easyocr(self, pdf_path: str) -> str:
-        """Extract text using EasyOCR (better for handwritten text)"""
+        """Extract text using EasyOCR (optimized for handwritten text)"""
         try:
             import fitz  # PyMuPDF for PDF to image conversion
             import easyocr
             import numpy as np
-            from PIL import Image
+            from PIL import Image, ImageEnhance, ImageFilter
+            import cv2
             import io
         except ImportError:
-            raise ImportError("PyMuPDF, easyocr, numpy, and Pillow are required for ocr_easyocr processor. Install with: pip install pymupdf easyocr numpy Pillow")
+            raise ImportError("PyMuPDF, easyocr, numpy, opencv-python, and Pillow are required for ocr_easyocr processor. Install with: pip install pymupdf easyocr numpy opencv-python Pillow")
 
         text = ""
         doc = fitz.open(pdf_path)
         
-        # Initialize EasyOCR reader (supports multiple languages)
-        reader = easyocr.Reader(['en'])  # Can add more languages: ['en', 'es', 'fr', 'de', 'zh']
+        # Initialize EasyOCR reader with multiple languages and handwriting optimization
+        reader = easyocr.Reader(['en'], gpu=False)  # Can add more languages: ['en', 'es', 'fr', 'de', 'zh']
         
-        logger.info(f"Processing {len(doc)} pages with EasyOCR")
+        logger.info(f"Processing {len(doc)} pages with EasyOCR (handwriting optimized)")
         
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
             
-            # Convert page to image
-            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better OCR accuracy
-            pix = page.get_pixmap(matrix=mat)
+            # Convert page to high-resolution image for better OCR
+            mat = fitz.Matrix(3.0, 3.0)  # 3x zoom for better handwriting recognition
+            pix = page.get_pixmap(matrix=mat, alpha=False)
             img_data = pix.tobytes("png")
             
-            # Convert to numpy array for EasyOCR
+            # Load image and convert to PIL for preprocessing
             image = Image.open(io.BytesIO(img_data))
-            img_array = np.array(image)
             
-            # OCR the image
-            results = reader.readtext(img_array)
+            # Preprocessing for handwritten text
+            preprocessed_image = self._preprocess_handwritten_image(image)
             
-            # Extract text from results
-            page_text = ""
-            for (bbox, text_content, confidence) in results:
-                if confidence > 0.5:  # Filter low-confidence results
-                    page_text += text_content + " "
+            # Convert to numpy array for EasyOCR
+            img_array = np.array(preprocessed_image)
             
-            text += page_text + "\n\n"
-            logger.debug(f"Processed page {page_num + 1}/{len(doc)} with EasyOCR")
+            # OCR with handwriting-optimized parameters
+            try:
+                results = reader.readtext(
+                    img_array,
+                    width_ths=0.7,      # Adjusted for handwriting
+                    height_ths=0.7,     # Adjusted for handwriting  
+                    paragraph=True,     # Group text into paragraphs
+                    min_size=10,        # Minimum text size
+                    text_threshold=0.7, # Text detection threshold
+                    low_text=0.4,       # Low text threshold
+                    link_threshold=0.4, # Link threshold
+                    canvas_size=2560,   # Larger canvas for better processing
+                    mag_ratio=1.5       # Magnification ratio
+                )
+                
+                # Extract text with lower confidence threshold for handwriting
+                page_text = ""
+                for (bbox, text_content, confidence) in results:
+                    # Lower confidence threshold for handwritten text (0.3 instead of 0.5)
+                    if confidence > 0.3 and len(text_content.strip()) > 0:
+                        # Clean up the text
+                        cleaned_text = self._clean_handwritten_text(text_content)
+                        if cleaned_text:
+                            page_text += cleaned_text + " "
+                
+                text += page_text.strip() + "\n\n"
+                logger.debug(f"Processed page {page_num + 1}/{len(doc)} with EasyOCR (handwriting mode)")
+                
+            except Exception as e:
+                logger.warning(f"Error processing page {page_num + 1} with EasyOCR: {e}")
+                continue
         
         doc.close()
         return text
+
+    def _extract_pdf_ocr_handwritten(self, pdf_path: str) -> str:
+        """Extract text using specialized handwritten OCR (combines multiple techniques for maximum accuracy)"""
+        try:
+            import fitz  # PyMuPDF for PDF to image conversion
+            import easyocr
+            import pytesseract
+            import numpy as np
+            from PIL import Image, ImageEnhance, ImageFilter
+            import cv2
+            import io
+        except ImportError:
+            raise ImportError("PyMuPDF, easyocr, pytesseract, numpy, opencv-python, and Pillow are required for ocr_handwritten processor. Install with: pip install pymupdf easyocr pytesseract numpy opencv-python Pillow")
+
+        text = ""
+        doc = fitz.open(pdf_path)
+        
+        # Initialize both OCR engines
+        easyocr_reader = easyocr.Reader(['en'], gpu=False)
+        
+        logger.info(f"Processing {len(doc)} pages with specialized handwritten OCR (EasyOCR + Tesseract)")
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            
+            # Convert page to ultra-high resolution for handwriting
+            mat = fitz.Matrix(4.0, 4.0)  # 4x zoom for maximum detail
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            img_data = pix.tobytes("png")
+            
+            # Load and preprocess image with multiple techniques
+            image = Image.open(io.BytesIO(img_data))
+            
+            # Try multiple preprocessing approaches for handwriting
+            preprocessed_images = self._create_handwritten_variants(image)
+            
+            all_text_candidates = []
+            
+            # Process with each preprocessing variant
+            for variant_name, variant_image in preprocessed_images.items():
+                img_array = np.array(variant_image)
+                
+                # Try EasyOCR
+                try:
+                    easyocr_results = easyocr_reader.readtext(
+                        img_array,
+                        width_ths=0.8,
+                        height_ths=0.8,
+                        paragraph=True,
+                        min_size=8,
+                        text_threshold=0.6,
+                        low_text=0.3,
+                        link_threshold=0.3,
+                        canvas_size=3840,
+                        mag_ratio=2.0
+                    )
+                    
+                    easyocr_text = ""
+                    for (bbox, text_content, confidence) in easyocr_results:
+                        if confidence > 0.25:  # Very low threshold for handwriting
+                            cleaned = self._clean_handwritten_text(text_content)
+                            if cleaned:
+                                easyocr_text += cleaned + " "
+                    
+                    if easyocr_text.strip():
+                        all_text_candidates.append(("EasyOCR", variant_name, easyocr_text.strip()))
+                        
+                except Exception as e:
+                    logger.debug(f"EasyOCR failed on {variant_name}: {e}")
+                
+                # Try Tesseract with handwriting-optimized configs
+                tesseract_configs = [
+                    '--psm 8 --oem 3',  # Single word mode
+                    '--psm 7 --oem 3',  # Single line mode  
+                    '--psm 6 --oem 3',  # Single block mode
+                    '--psm 13 --oem 3', # Raw line mode (for handwriting)
+                ]
+                
+                for config in tesseract_configs:
+                    try:
+                        tesseract_text = pytesseract.image_to_string(variant_image, config=config)
+                        cleaned = self._clean_handwritten_text(tesseract_text)
+                        if cleaned and len(cleaned) > 2:
+                            all_text_candidates.append(("Tesseract", f"{variant_name}_{config.split()[1]}", cleaned))
+                    except Exception as e:
+                        logger.debug(f"Tesseract {config} failed on {variant_name}: {e}")
+            
+            # Select best text from all candidates
+            best_text = self._select_best_handwritten_text(all_text_candidates)
+            if best_text:
+                text += best_text + "\n\n"
+                logger.debug(f"Processed page {page_num + 1}/{len(doc)} - extracted: {len(best_text)} chars")
+            else:
+                logger.debug(f"No text extracted from page {page_num + 1}/{len(doc)}")
+        
+        doc.close()
+        return text
+
+    def _create_handwritten_variants(self, image: Image.Image) -> dict:
+        """Create multiple preprocessed variants optimized for different handwriting styles"""
+        variants = {}
+        
+        # Convert to grayscale base
+        if image.mode != 'L':
+            gray_image = image.convert('L')
+        else:
+            gray_image = image.copy()
+        
+        # Variant 1: Enhanced contrast and sharpness
+        enhancer = ImageEnhance.Contrast(gray_image)
+        enhanced = enhancer.enhance(2.0)
+        enhancer = ImageEnhance.Sharpness(enhanced)
+        variants["enhanced"] = enhancer.enhance(1.5)
+        
+        # Variant 2: Adaptive threshold
+        cv_img = np.array(gray_image)
+        adaptive = cv2.adaptiveThreshold(cv_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10)
+        variants["adaptive"] = Image.fromarray(adaptive)
+        
+        # Variant 3: Morphological operations for pen strokes
+        kernel = np.ones((1,1), np.uint8)
+        morph = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, kernel)
+        variants["morphological"] = Image.fromarray(morph)
+        
+        # Variant 4: Noise reduction and smoothing
+        blurred = cv2.GaussianBlur(cv_img, (3,3), 0)
+        thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        variants["denoised"] = Image.fromarray(thresh)
+        
+        # Variant 5: Edge-preserving filter
+        try:
+            filtered = cv2.bilateralFilter(cv_img, 9, 75, 75)
+            variants["bilateral"] = Image.fromarray(filtered)
+        except:
+            variants["bilateral"] = gray_image
+        
+        return variants
+
+    def _select_best_handwritten_text(self, candidates: list) -> str:
+        """Select the best text from multiple OCR attempts"""
+        if not candidates:
+            return ""
+        
+        # Score candidates based on length, character diversity, and common patterns
+        scored_candidates = []
+        
+        for engine, variant, text in candidates:
+            score = 0
+            
+            # Length score (longer is generally better)
+            score += len(text) * 0.5
+            
+            # Character diversity score
+            unique_chars = len(set(text.lower()))
+            score += unique_chars * 2
+            
+            # Medical/prescription pattern bonus
+            medical_terms = ['mg', 'ml', 'tablet', 'capsule', 'daily', 'twice', 'dose', 'rx', 'take', 'times']
+            for term in medical_terms:
+                if term.lower() in text.lower():
+                    score += 10
+            
+            # Penalize very short results
+            if len(text) < 5:
+                score *= 0.3
+            
+            # Slight preference for EasyOCR on handwriting
+            if engine == "EasyOCR":
+                score *= 1.1
+            
+            scored_candidates.append((score, text, engine, variant))
+        
+        # Return the highest scoring result
+        if scored_candidates:
+            scored_candidates.sort(key=lambda x: x[0], reverse=True)
+            best_score, best_text, best_engine, best_variant = scored_candidates[0]
+            logger.debug(f"Selected {best_engine} ({best_variant}) with score {best_score:.1f}")
+            return best_text
+        
+        return ""
+
+    def _preprocess_handwritten_image(self, image: Image.Image) -> Image.Image:
+        """Preprocess image for better handwritten text recognition"""
+        # Convert to grayscale
+        if image.mode != 'L':
+            image = image.convert('L')
+        
+        # Enhance contrast for better handwriting visibility
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(1.5)
+        
+        # Enhance sharpness 
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(1.2)
+        
+        # Apply slight noise reduction
+        image = image.filter(ImageFilter.MedianFilter(size=3))
+        
+        # Convert to OpenCV format for advanced preprocessing
+        cv_image = cv2.array(image)
+        
+        # Apply adaptive thresholding to handle varying lighting
+        cv_image = cv2.adaptiveThreshold(
+            cv_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # Morphological operations to clean up the image
+        kernel = np.ones((2,2), np.uint8)
+        cv_image = cv2.morphologyEx(cv_image, cv2.MORPH_CLOSE, kernel)
+        
+        # Convert back to PIL
+        return Image.fromarray(cv_image)
+    
+    def _clean_handwritten_text(self, text: str) -> str:
+        """Clean and normalize text extracted from handwritten documents"""
+        if not text or not text.strip():
+            return ""
+        
+        # Remove excessive whitespace
+        text = ' '.join(text.split())
+        
+        # Remove single characters that are likely OCR errors
+        words = text.split()
+        cleaned_words = []
+        
+        for word in words:
+            # Keep words with 2+ characters, or single letters that could be valid
+            if len(word) >= 2 or word.upper() in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789':
+                cleaned_words.append(word)
+        
+        cleaned_text = ' '.join(cleaned_words)
+        
+        # Only return if we have meaningful content
+        if len(cleaned_text.strip()) >= 2:
+            return cleaned_text.strip()
+        
+        return ""
 
     def add_epub(self, epub_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
         """

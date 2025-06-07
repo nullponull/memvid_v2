@@ -230,6 +230,7 @@ Memvid supports multiple PDF processing methods to handle different types of PDF
 | **pymupdf** | Better text extraction from digital PDFs | Fast | `pymupdf` |
 | **ocr_tesseract** | Scanned PDFs, images with text | Medium | `pymupdf`, `pytesseract`, `Pillow` |
 | **ocr_easyocr** | Handwritten text, multilingual content | Slow | `pymupdf`, `easyocr`, `numpy`, `Pillow` |
+| **ocr_handwritten** | Specialized for prescriptions, forms | Slowest | All OCR dependencies + `opencv-python` |
 
 ### Usage Examples
 
@@ -249,6 +250,9 @@ encoder.add_pdf("scanned.pdf", pdf_processor="ocr_tesseract")
 
 # OCR optimized for handwritten text
 encoder.add_pdf("handwritten.pdf", pdf_processor="ocr_easyocr")
+
+# Specialized processing for prescriptions and complex handwriting
+encoder.add_pdf("prescription.pdf", pdf_processor="ocr_handwritten")
 ```
 
 ### Command Line Usage
@@ -262,6 +266,9 @@ python examples/file_chat.py --files scanned.pdf --pdf-processor ocr_tesseract
 
 # Handle handwritten documents
 python examples/file_chat.py --files notes.pdf --pdf-processor ocr_easyocr
+
+# Specialized processing for prescriptions and complex handwriting
+python examples/file_chat.py --files prescription.pdf --pdf-processor ocr_handwritten
 
 # Compare different processors
 python examples/test_pdf_processors.py your_document.pdf
@@ -286,6 +293,7 @@ When choosing a PDF processor, consider:
 - **Digital PDFs**: Use `pymupdf` for best results (better than `pypdf2`)
 - **Scanned documents**: Use `ocr_tesseract` for good accuracy and speed
 - **Handwritten text**: Use `ocr_easyocr` for better handwriting recognition
+- **Complex handwriting/prescriptions**: Use `ocr_handwritten` for maximum accuracy
 - **Multilingual content**: Use `ocr_easyocr` with language support
 
 ### Testing PDF Processors
