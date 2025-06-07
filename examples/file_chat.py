@@ -156,7 +156,9 @@ def create_memory_from_files(files, output_dir, memory_name, **config_overrides)
             overlap = config["chunking"]["overlap"]
 
             if file_path.suffix.lower() == '.pdf':
-                encoder.add_pdf(str(file_path), chunk_size, overlap)
+                # Get pdf_processor from config overrides or use default
+                pdf_processor = config_overrides.get('pdf_processor', 'pypdf2')
+                encoder.add_pdf(str(file_path), chunk_size, overlap, pdf_processor=pdf_processor)
             elif file_path.suffix.lower() == '.epub':
                 encoder.add_epub(str(file_path), chunk_size, overlap)
             elif file_path.suffix.lower() in ['.html', '.htm']:
@@ -462,6 +464,12 @@ def main():
         choices=['h264', 'h265', 'mp4v'],
         help='Video codec to use for compression'
     )
+    parser.add_argument(
+        '--pdf-processor',
+        choices=['pypdf2', 'pymupdf', 'ocr_tesseract', 'ocr_easyocr'],
+        default='pypdf2',
+        help='PDF processing method: pypdf2 (digital PDFs), pymupdf (better extraction), ocr_tesseract (scanned PDFs), ocr_easyocr (handwritten text)'
+    )
 
     # File processing options
     parser.add_argument(
@@ -510,6 +518,8 @@ def main():
                 config_overrides['index_type'] = args.index_type
             if args.codec:
                 config_overrides['codec'] = args.codec
+            if args.pdf_processor:
+                config_overrides['pdf_processor'] = args.pdf_processor
 
             # Show what defaults are being used if no overrides provided
             if not config_overrides:

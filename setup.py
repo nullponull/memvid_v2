@@ -52,6 +52,12 @@ setup(
             "anthropic>=0.52.0",
             "groq>=0.4.0",
         ],
+        "pdf": [
+            "PyPDF2>=3.0.0",
+            "pymupdf>=1.23.0",
+            "pytesseract>=0.3.10",
+            "easyocr>=1.7.0",
+        ],
         "epub": [
             "beautifulsoup4>=4.0.0",
             "ebooklib>=0.18",

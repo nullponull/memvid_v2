@@ -63,6 +63,18 @@ pip install memvid
 pip install memvid PyPDF2
 ```
 
+### For Enhanced PDF & OCR Support
+```bash
+# Standard PDF processing
+pip install memvid PyPDF2 pymupdf
+
+# OCR for scanned/handwritten PDFs  
+pip install memvid PyPDF2 pymupdf pytesseract easyocr
+
+# All PDF features
+pip install "memvid[pdf]"
+```
+
 ### Recommended Setup (Virtual Environment)
 ```bash
 # Create a new project directory
@@ -205,6 +217,93 @@ EOF
 export OPENAI_API_KEY="your-api-key"  # Optional
 python book_chat.py
 ```
+
+## 📄 Advanced PDF Processing
+
+Memvid supports multiple PDF processing methods to handle different types of PDF documents:
+
+### Supported PDF Processors
+
+| Processor | Best For | Performance | Dependencies |
+|-----------|----------|-------------|--------------|
+| **pypdf2** | Digital PDFs with selectable text | Fast | `PyPDF2` |
+| **pymupdf** | Better text extraction from digital PDFs | Fast | `pymupdf` |
+| **ocr_tesseract** | Scanned PDFs, images with text | Medium | `pymupdf`, `pytesseract`, `Pillow` |
+| **ocr_easyocr** | Handwritten text, multilingual content | Slow | `pymupdf`, `easyocr`, `numpy`, `Pillow` |
+
+### Usage Examples
+
+```python
+from memvid import MemvidEncoder
+
+encoder = MemvidEncoder()
+
+# Standard digital PDF (default)
+encoder.add_pdf("document.pdf", pdf_processor="pypdf2")
+
+# Better extraction for digital PDFs
+encoder.add_pdf("document.pdf", pdf_processor="pymupdf")
+
+# OCR for scanned documents
+encoder.add_pdf("scanned.pdf", pdf_processor="ocr_tesseract")
+
+# OCR optimized for handwritten text
+encoder.add_pdf("handwritten.pdf", pdf_processor="ocr_easyocr")
+```
+
+### Command Line Usage
+
+```bash
+# Use enhanced PDF extraction
+python examples/file_chat.py --files document.pdf --pdf-processor pymupdf
+
+# Process scanned PDFs with OCR
+python examples/file_chat.py --files scanned.pdf --pdf-processor ocr_tesseract
+
+# Handle handwritten documents
+python examples/file_chat.py --files notes.pdf --pdf-processor ocr_easyocr
+
+# Compare different processors
+python examples/test_pdf_processors.py your_document.pdf
+```
+
+### Installation for PDF Features
+
+```bash
+# Install all PDF processing capabilities
+pip install "memvid[pdf]"
+
+# Or install specific components
+pip install pymupdf                    # Enhanced PDF extraction
+pip install pytesseract Pillow        # Tesseract OCR
+pip install easyocr numpy             # EasyOCR for handwritten text
+```
+
+### Performance Comparison
+
+When choosing a PDF processor, consider:
+
+- **Digital PDFs**: Use `pymupdf` for best results (better than `pypdf2`)
+- **Scanned documents**: Use `ocr_tesseract` for good accuracy and speed
+- **Handwritten text**: Use `ocr_easyocr` for better handwriting recognition
+- **Multilingual content**: Use `ocr_easyocr` with language support
+
+### Testing PDF Processors
+
+Use the comparison tool to find the best processor for your documents:
+
+```bash
+# Test all available processors
+python examples/test_pdf_processors.py sample.pdf
+
+# Test specific processors
+python examples/test_pdf_processors.py scanned.pdf --processors ocr_tesseract ocr_easyocr
+```
+
+The tool will show you:
+- Processing speed comparison
+- Text extraction quality
+- Recommendations for your document type
 
 ## 🛠️ Advanced Configuration
 
