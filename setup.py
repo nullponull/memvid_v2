@@ -50,6 +50,13 @@ setup(
             "openai>=1.0.0",
             "google-generativeai>=0.8.0",
             "anthropic>=0.52.0",
+            "groq>=0.4.0",
+        ],
+        "pdf": [
+            "PyPDF2>=3.0.0",
+            "pymupdf>=1.23.0",
+            "pytesseract>=0.3.10",
+            "easyocr>=1.7.0",
         ],
         "epub": [
             "beautifulsoup4>=4.0.0",

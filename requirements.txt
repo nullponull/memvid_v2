@@ -9,6 +9,9 @@ Pillow==11.2.1
 
 # Optional dependencies for PDF support
 PyPDF2==3.0.1
+pymupdf>=1.23.0
+pytesseract>=0.3.10
+easyocr>=1.7.0
 python-dotenv==1.1.0
 
 # Optional imports for epub
@@ -19,3 +22,4 @@ ebooklib
 openai==1.82.0
 google-generativeai==0.8.5
 anthropic~=0.52.1
+groq>=0.4.0

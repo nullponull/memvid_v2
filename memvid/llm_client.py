@@ -1,4 +1,3 @@
-
 # memvid/llm_client.py
 
 import os
@@ -30,6 +29,16 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
     print("Warning: Anthropic library not available. Anthropic provider will be disabled.")
+
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("Warning: Groq library not available. Groq provider will be disabled.")
+
+# OpenRouter uses OpenAI SDK, so we check for OpenAI availability
+OPENROUTER_AVAILABLE = OPENAI_AVAILABLE
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
@@ -301,6 +310,98 @@ class AnthropicProvider(LLMProvider):
             elif chunk.type == "message_stop":
                 break
 
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter provider implementation using OpenAI SDK"""
+
+    def __init__(self, api_key: str, model: str = "google/gemini-2.0-flash-exp:free"):
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        self.model = model
+        self.api_key = api_key
+
+    def chat(self, messages: List[Dict[str, str]], stream: bool = False, **kwargs) -> Any:
+        """Send chat messages to OpenRouter"""
+        try:
+            # Add OpenRouter-specific headers
+            extra_headers = {
+                "HTTP-Referer": "https://memvid.ai",  # Optional: your site URL
+                "X-Title": "Memvid"  # Optional: your app name
+            }
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=stream,
+                extra_headers=extra_headers,
+                **kwargs
+            )
+
+            if stream:
+                return self._stream_response(response)
+            else:
+                return response.choices[0].message.content
+
+        except Exception as e:
+            print(f"OpenRouter API error: {e}")
+            return None
+
+    def chat_stream(self, messages: List[Dict[str, str]], **kwargs) -> Iterator[str]:
+        """Stream chat response from OpenRouter"""
+        return self.chat(messages, stream=True, **kwargs)
+
+    def _stream_response(self, response) -> Iterator[str]:
+        """Process streaming response from OpenRouter"""
+        for chunk in response:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+
+class GroqProvider(LLMProvider):
+    """Groq provider implementation"""
+
+    def __init__(self, api_key: str, model: str = "llama3-70b-8192"):
+        self.client = Groq(api_key=api_key)
+        self.model = model
+        self.api_key = api_key
+
+    def chat(self, messages: List[Dict[str, str]], stream: bool = False, **kwargs) -> Any:
+        """Send chat messages to Groq"""
+        try:
+            # Filter kwargs to only include Groq-supported parameters
+            groq_kwargs = {}
+            supported_params = ['temperature', 'max_tokens', 'top_p', 'stop', 'frequency_penalty', 'presence_penalty']
+            
+            for param in supported_params:
+                if param in kwargs:
+                    groq_kwargs[param] = kwargs[param]
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=stream,
+                **groq_kwargs
+            )
+
+            if stream:
+                return self._stream_response(response)
+            else:
+                return response.choices[0].message.content
+
+        except Exception as e:
+            print(f"Groq API error: {e}")
+            return None
+
+    def chat_stream(self, messages: List[Dict[str, str]], **kwargs) -> Iterator[str]:
+        """Stream chat response from Groq"""
+        return self.chat(messages, stream=True, **kwargs)
+
+    def _stream_response(self, response) -> Iterator[str]:
+        """Process streaming response from Groq"""
+        for chunk in response:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+
 class LLMClient:
     """Unified LLM client that supports multiple providers"""
 
@@ -308,6 +409,8 @@ class LLMClient:
         'openai': OpenAIProvider,
         'google': GoogleProvider,
         'anthropic': AnthropicProvider,
+        'openrouter': OpenRouterProvider,
+        'groq': GroqProvider,
     }
 
     def __init__(self, provider: str = 'google', model: str = None, api_key: str = None):
@@ -320,7 +423,9 @@ class LLMClient:
         availability_map = {
             'openai': OPENAI_AVAILABLE,
             'google': GOOGLE_AVAILABLE,
-            'anthropic': ANTHROPIC_AVAILABLE
+            'anthropic': ANTHROPIC_AVAILABLE,
+            'openrouter': OPENROUTER_AVAILABLE,
+            'groq': GROQ_AVAILABLE
         }
 
         if not availability_map[self.provider_name]:
@@ -350,6 +455,8 @@ class LLMClient:
             'openai': ['OPENAI_API_KEY'],
             'google': ['GOOGLE_API_KEY'],
             'anthropic': ['ANTHROPIC_API_KEY'],
+            'openrouter': ['OPENROUTER_API_KEY'],
+            'groq': ['GROQ_API_KEY'],
         }
 
         for key in env_keys.get(provider.lower(), []):
@@ -365,6 +472,8 @@ class LLMClient:
             'openai': ['OPENAI_API_KEY'],
             'google': ['GOOGLE_API_KEY'],
             'anthropic': ['ANTHROPIC_API_KEY'],
+            'openrouter': ['OPENROUTER_API_KEY'],
+            'groq': ['GROQ_API_KEY'],
         }
         return env_keys.get(provider.lower(), [])
 
@@ -392,7 +501,9 @@ class LLMClient:
         availability_map = {
             'openai': OPENAI_AVAILABLE,
             'google': GOOGLE_AVAILABLE,
-            'anthropic': ANTHROPIC_AVAILABLE
+            'anthropic': ANTHROPIC_AVAILABLE,
+            'openrouter': OPENROUTER_AVAILABLE,
+            'groq': GROQ_AVAILABLE
         }
         return [provider for provider, available in availability_map.items() if available]
 

@@ -59,7 +59,7 @@ class MemvidEncoder:
         chunks = chunk_text(text, chunk_size, overlap)
         self.add_chunks(chunks)
 
-    def add_pdf(self, pdf_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
+    def add_pdf(self, pdf_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP, pdf_processor: str = "pypdf2"):
         """
         Extract text from PDF and add as chunks
 
@@ -67,32 +67,153 @@ class MemvidEncoder:
             pdf_path: Path to PDF file
             chunk_size: Target chunk size
             overlap: Overlap between chunks
+            pdf_processor: PDF processing method - options:
+                - "pypdf2": Standard digital PDF text extraction (default)
+                - "pymupdf": Enhanced PDF text extraction (better than PyPDF2)
+                - "ocr_tesseract": OCR using Tesseract (for scanned/image PDFs)
+                - "ocr_easyocr": OCR using EasyOCR (better for handwritten text)
         """
-        try:
-            import PyPDF2
-        except ImportError:
-            raise ImportError("PyPDF2 is required for PDF support. Install with: pip install PyPDF2")
-
         if not Path(pdf_path).exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-        text = ""
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            num_pages = len(pdf_reader.pages)
+        logger.info(f"Processing PDF with {pdf_processor}: {Path(pdf_path).name}")
 
-            logger.info(f"Extracting text from {num_pages} pages of {Path(pdf_path).name}")
-
-            for page_num in range(num_pages):
-                page = pdf_reader.pages[page_num]
-                page_text = page.extract_text()
-                text += page_text + "\n\n"
+        if pdf_processor == "pypdf2":
+            text = self._extract_pdf_pypdf2(pdf_path)
+        elif pdf_processor == "pymupdf":
+            text = self._extract_pdf_pymupdf(pdf_path)
+        elif pdf_processor == "ocr_tesseract":
+            text = self._extract_pdf_ocr_tesseract(pdf_path)
+        elif pdf_processor == "ocr_easyocr":
+            text = self._extract_pdf_ocr_easyocr(pdf_path)
+        else:
+            raise ValueError(f"Unsupported pdf_processor: {pdf_processor}. Options: pypdf2, pymupdf, ocr_tesseract, ocr_easyocr")
 
         if text.strip():
             self.add_text(text, chunk_size, overlap)
             logger.info(f"Added PDF content: {len(text)} characters from {Path(pdf_path).name}")
         else:
             logger.warning(f"No text extracted from PDF: {pdf_path}")
+
+    def _extract_pdf_pypdf2(self, pdf_path: str) -> str:
+        """Extract text using PyPDF2 (original method)"""
+        try:
+            import PyPDF2
+        except ImportError:
+            raise ImportError("PyPDF2 is required for pypdf2 processor. Install with: pip install PyPDF2")
+
+        text = ""
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            num_pages = len(pdf_reader.pages)
+
+            logger.info(f"Extracting text from {num_pages} pages using PyPDF2")
+
+            for page_num in range(num_pages):
+                page = pdf_reader.pages[page_num]
+                page_text = page.extract_text()
+                text += page_text + "\n\n"
+
+        return text
+
+    def _extract_pdf_pymupdf(self, pdf_path: str) -> str:
+        """Extract text using PyMuPDF (better text extraction)"""
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            raise ImportError("PyMuPDF is required for pymupdf processor. Install with: pip install pymupdf")
+
+        text = ""
+        doc = fitz.open(pdf_path)
+        
+        logger.info(f"Extracting text from {len(doc)} pages using PyMuPDF")
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            page_text = page.get_text()
+            text += page_text + "\n\n"
+        
+        doc.close()
+        return text
+
+    def _extract_pdf_ocr_tesseract(self, pdf_path: str) -> str:
+        """Extract text using Tesseract OCR (for scanned PDFs)"""
+        try:
+            import fitz  # PyMuPDF for PDF to image conversion
+            import pytesseract
+            from PIL import Image
+            import io
+        except ImportError:
+            raise ImportError("PyMuPDF, pytesseract, and Pillow are required for ocr_tesseract processor. Install with: pip install pymupdf pytesseract Pillow")
+
+        text = ""
+        doc = fitz.open(pdf_path)
+        
+        logger.info(f"Processing {len(doc)} pages with Tesseract OCR")
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            
+            # Convert page to image
+            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better OCR accuracy
+            pix = page.get_pixmap(matrix=mat)
+            img_data = pix.tobytes("png")
+            
+            # OCR the image
+            image = Image.open(io.BytesIO(img_data))
+            page_text = pytesseract.image_to_string(image, config='--psm 6')
+            text += page_text + "\n\n"
+            
+            logger.debug(f"Processed page {page_num + 1}/{len(doc)} with OCR")
+        
+        doc.close()
+        return text
+
+    def _extract_pdf_ocr_easyocr(self, pdf_path: str) -> str:
+        """Extract text using EasyOCR (better for handwritten text)"""
+        try:
+            import fitz  # PyMuPDF for PDF to image conversion
+            import easyocr
+            import numpy as np
+            from PIL import Image
+            import io
+        except ImportError:
+            raise ImportError("PyMuPDF, easyocr, numpy, and Pillow are required for ocr_easyocr processor. Install with: pip install pymupdf easyocr numpy Pillow")
+
+        text = ""
+        doc = fitz.open(pdf_path)
+        
+        # Initialize EasyOCR reader (supports multiple languages)
+        reader = easyocr.Reader(['en'])  # Can add more languages: ['en', 'es', 'fr', 'de', 'zh']
+        
+        logger.info(f"Processing {len(doc)} pages with EasyOCR")
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            
+            # Convert page to image
+            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better OCR accuracy
+            pix = page.get_pixmap(matrix=mat)
+            img_data = pix.tobytes("png")
+            
+            # Convert to numpy array for EasyOCR
+            image = Image.open(io.BytesIO(img_data))
+            img_array = np.array(image)
+            
+            # OCR the image
+            results = reader.readtext(img_array)
+            
+            # Extract text from results
+            page_text = ""
+            for (bbox, text_content, confidence) in results:
+                if confidence > 0.5:  # Filter low-confidence results
+                    page_text += text_content + " "
+            
+            text += page_text + "\n\n"
+            logger.debug(f"Processed page {page_num + 1}/{len(doc)} with EasyOCR")
+        
+        doc.close()
+        return text
 
     def add_epub(self, epub_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
         """

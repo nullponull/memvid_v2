@@ -99,7 +99,7 @@ def load_user_data(input_path, chunk_size=DEFAULT_CHUNK_SIZE, overlap=DEFAULT_OV
         for file_path in files:
             try:
                 if file_path.suffix.lower() == '.pdf':
-                    encoder.add_pdf(str(file_path), chunk_size=chunk_size, overlap=overlap)
+                    encoder.add_pdf(str(file_path), chunk_size=chunk_size, overlap=overlap, pdf_processor='pypdf2')
                 elif file_path.suffix.lower() == '.epub':
                     encoder.add_epub(str(file_path), chunk_size=chunk_size, overlap=overlap)
                 elif file_path.suffix.lower() == '.json':
@@ -146,7 +146,7 @@ def load_user_data(input_path, chunk_size=DEFAULT_CHUNK_SIZE, overlap=DEFAULT_OV
 
         try:
             if input_path.suffix.lower() == '.pdf':
-                encoder.add_pdf(str(input_path), chunk_size=chunk_size, overlap=overlap)
+                encoder.add_pdf(str(input_path), chunk_size=chunk_size, overlap=overlap, pdf_processor='pypdf2')
             elif input_path.suffix.lower() == '.epub':
                 encoder.add_epub(str(input_path), chunk_size=chunk_size, overlap=overlap)
             elif input_path.suffix.lower() == '.json':
