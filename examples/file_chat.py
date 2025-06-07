@@ -426,7 +426,7 @@ def main():
     # LLM options
     parser.add_argument(
         '--provider',
-        choices=['openai', 'google', 'anthropic'],
+        choices=['openai', 'google', 'anthropic', 'openrouter', 'groq'],
         default='google',
         help='LLM provider to use (default: google)'
     )

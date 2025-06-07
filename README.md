@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/ec550e93-e9c4-459f-a8a1-46e122b5851e
 - 📚 **PDF Support**: Direct import and indexing of PDF documents
 - 🚀 **Fast Retrieval**: Sub-second search across massive datasets
 - 💾 **Efficient Storage**: 10x compression compared to traditional databases
-- 🔌 **Pluggable LLMs**: Works with OpenAI, Anthropic, or local models
+- 🔌 **Pluggable LLMs**: Works with OpenAI, Anthropic, Google, OpenRouter, Groq, or local models
 - 🌐 **Offline-First**: No internet required after video generation
 - 🔧 **Simple API**: Get started with just 3 lines of code
 
@@ -235,6 +235,114 @@ encoder.build_video(
 # Process large datasets in parallel
 encoder = MemvidEncoder(n_workers=8)
 encoder.add_chunks_parallel(massive_chunk_list)
+```
+
+## 🤖 LLM Provider Support
+
+Memvid supports multiple LLM providers for AI-powered conversations with your memory:
+
+### Supported Providers
+
+| Provider | Models | API Key Required | Notes |
+|----------|--------|------------------|-------|
+| **Google** | gemini-2.0-flash-exp, gemini-1.5-pro | `GOOGLE_API_KEY` | Default provider, fast and reliable |
+| **OpenAI** | gpt-4o, gpt-4, gpt-3.5-turbo | `OPENAI_API_KEY` | Industry standard, excellent quality |
+| **Anthropic** | claude-3.5-sonnet, claude-3-haiku | `ANTHROPIC_API_KEY` | Advanced reasoning capabilities |
+| **OpenRouter** | 100+ models via unified API | `OPENROUTER_API_KEY` | Access to multiple providers through one API (default: free model) |
+| **Groq** | llama3-70b-8192, mixtral-8x7b | `GROQ_API_KEY` | Ultra-fast inference speeds |
+
+### Usage Examples
+
+```python
+from memvid import MemvidChat, LLMClient
+
+# Using Google (default)
+chat = MemvidChat("memory.mp4", "index.json", llm_provider="google")
+
+# Using OpenAI
+chat = MemvidChat("memory.mp4", "index.json", llm_provider="openai", llm_model="gpt-4o")
+
+# Using Anthropic Claude
+chat = MemvidChat("memory.mp4", "index.json", llm_provider="anthropic", llm_model="claude-3.5-sonnet")
+
+# Using OpenRouter (access to many models)
+chat = MemvidChat("memory.mp4", "index.json", llm_provider="openrouter", llm_model="google/gemini-2.0-flash-exp:free")
+
+# Using Groq (ultra-fast)
+chat = MemvidChat("memory.mp4", "index.json", llm_provider="groq", llm_model="llama3-70b-8192")
+
+# Test standalone LLM clients
+client = LLMClient(provider="openrouter", model="meta-llama/llama-3.1-70b-instruct")
+response = client.chat([{"role": "user", "content": "Hello!"}])
+```
+
+### Environment Variables
+
+Set your API keys as environment variables:
+
+```bash
+# Google AI
+export GOOGLE_API_KEY="AIzaSyB..."
+
+# OpenAI
+export OPENAI_API_KEY="sk-..."
+
+# Anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# OpenRouter (access to 100+ models)
+export OPENROUTER_API_KEY="sk-or-..."
+
+# Groq (ultra-fast inference)
+export GROQ_API_KEY="gsk_..."
+```
+
+### Provider-Specific Features
+
+**OpenRouter Benefits:**
+- Access to 100+ models from different providers
+- Unified API for switching between models
+- Cost-effective pricing
+- Real-time model availability
+
+**Groq Benefits:**
+- Lightning-fast inference (up to 500 tokens/second)
+- Optimized for Llama and Mixtral models
+- Low latency for real-time applications
+
+### Command Line Usage
+
+Use providers with the file_chat example:
+
+```bash
+# Default Google
+python examples/file_chat.py --input-dir docs/ --provider google
+
+# OpenAI GPT-4
+python examples/file_chat.py --input-dir docs/ --provider openai --model gpt-4o
+
+# Anthropic Claude
+python examples/file_chat.py --input-dir docs/ --provider anthropic --model claude-3.5-sonnet
+
+# OpenRouter (access many models)
+python examples/file_chat.py --input-dir docs/ --provider openrouter --model "google/gemini-2.0-flash-exp:free"
+
+# Groq (ultra-fast)
+python examples/file_chat.py --input-dir docs/ --provider groq --model llama3-70b-8192
+```
+
+### Testing New Providers
+
+Use the test script to verify your setup:
+
+```bash
+# Test all available providers
+python examples/test_new_providers.py
+
+# Set API keys first
+export OPENROUTER_API_KEY="your-key"
+export GROQ_API_KEY="your-key"
+python examples/test_new_providers.py
 ```
 
 ## 🐛 Troubleshooting
