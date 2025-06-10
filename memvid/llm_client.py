@@ -315,7 +315,7 @@ class TogetherAIProvider(LLMProvider):
         self.model = model
 
     def chat(self, messages: List[Dict[str, str]], stream: bool = False, **kwargs) -> Any:
-        """Send chat messages to OpenAI"""
+        """Send chat messages to TogetherAI"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -334,11 +334,11 @@ class TogetherAIProvider(LLMProvider):
             return None
 
     def chat_stream(self, messages: List[Dict[str, str]], **kwargs) -> Iterator[str]:
-        """Stream chat response from OpenAI"""
+        """Stream chat response from TogetherAI"""
         return self.chat(messages, stream=True, **kwargs)
 
     def _stream_response(self, response) -> Iterator[str]:
-        """Process streaming response from OpenAI"""
+        """Process streaming response from TogetherAI"""
         for chunk in response:
             if chunk.choices[0].delta.content is not None:
                 yield chunk.choices[0].delta.content
