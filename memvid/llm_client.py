@@ -310,7 +310,7 @@ class AnthropicProvider(LLMProvider):
 class TogetherAIProvider(LLMProvider):
     """TogetherAI provider implementation"""
 
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"):
         self.client = Together(api_key=api_key)
         self.model = model
 
