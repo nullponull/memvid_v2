@@ -13,8 +13,9 @@ import cv2
 
 from .utils import (
     extract_frame, decode_qr, batch_extract_and_decode,
-    extract_and_decode_cached
+    extract_and_decode_cached, batch_extract_and_decode_json
 )
+
 from .index import IndexManager
 from .config import get_default_config
 
@@ -145,7 +146,7 @@ class MemvidRetriever:
     
     def _decode_frames_parallel(self, frame_numbers: List[int]) -> Dict[int, str]:
         """
-        Decode multiple frames in parallel
+        Decode multiple frames in parallel, preferring JSON over image decoding
         
         Args:
             frame_numbers: List of frame numbers to decode
@@ -153,7 +154,6 @@ class MemvidRetriever:
         Returns:
             Dict mapping frame number to decoded data
         """
-        # Check cache first
         results = {}
         uncached_frames = []
         
@@ -166,19 +166,28 @@ class MemvidRetriever:
         if not uncached_frames:
             return results
         
-        # Decode uncached frames in parallel
-        max_workers = self.config["retrieval"]["max_workers"]
-        decoded = batch_extract_and_decode(
-            self.video_file, 
-            uncached_frames, 
-            max_workers=max_workers
-        )
+        video_dir = Path(self.video_file).parent
+        json_results = batch_extract_and_decode_json(str(video_dir), uncached_frames)
         
-        # Update results and cache
-        for frame_num, data in decoded.items():
+        for frame_num, data in json_results.items():
             results[frame_num] = data
             if len(self._frame_cache) < self._cache_size:
                 self._frame_cache[frame_num] = data
+        
+        remaining_frames = [f for f in uncached_frames if f not in json_results]
+        
+        if remaining_frames:
+            max_workers = self.config["retrieval"]["max_workers"]
+            decoded = batch_extract_and_decode(
+                self.video_file, 
+                remaining_frames, 
+                max_workers=max_workers
+            )
+            
+            for frame_num, data in decoded.items():
+                results[frame_num] = data
+                if len(self._frame_cache) < self._cache_size:
+                    self._frame_cache[frame_num] = data
         
         return results
     

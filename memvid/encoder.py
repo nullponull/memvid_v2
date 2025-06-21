@@ -208,9 +208,15 @@ class MemvidEncoder:
 
         for frame_num, chunk in chunks_iter:
             chunk_data = {"id": frame_num, "text": chunk, "frame": frame_num}
-            qr_image = encode_to_qr(json.dumps(chunk_data))
+            qr_image, bitmatrix_data = encode_to_qr(json.dumps(chunk_data))
+            
             frame_path = frames_dir / f"frame_{frame_num:06d}.png"
             qr_image.save(frame_path)
+            
+            if bitmatrix_data:
+                json_path = frames_dir / f"frame_{frame_num:06d}.json"
+                with open(json_path, 'w') as f:
+                    json.dump(bitmatrix_data, f, indent=2)
 
         created_frames = list(frames_dir.glob("frame_*.png"))
         print(f"🐛 FRAMES: {len(created_frames)} files in {frames_dir}")
